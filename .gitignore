@@ -10,7 +10,9 @@ installer/
 *.spec.tmp
 
 # Local release/build tooling
-scripts/
+scripts/Build.bat
+scripts/Kurulum-Yap.bat
+scripts/Temizle.bat
 packaging/
 Icon.html
 icon.ico

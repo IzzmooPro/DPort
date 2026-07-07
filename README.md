@@ -44,6 +44,12 @@ DPort açık kaynak olarak burada yayınlanır. Kurulum dosyaları GitHub Releas
 
 İstersen kaynak kodu ve yayınlanan kurulum dosyalarını buradan kontrol edebilirsin.
 
+## Kaynak Koddan Çalıştırmak
+
+Python kuruluysa projeyi kaynak koddan denemek için:
+
+`scripts/Calistir.bat`
+
 ## Geliştirici
 
 Geliştirici: **IzzmooPro**
@@ -97,3 +103,9 @@ Updates are not forced. Every step requires user confirmation.
 DPort is published here as open source. Installer files are shared through GitHub Releases. Because the app asks for administrator rights, Windows or some antivirus tools may be extra cautious; this can happen with tools that manage connection settings.
 
 You can review the source code and release files here whenever you want.
+
+## Run From Source
+
+If Python is installed, you can try the project from source with:
+
+`scripts/Calistir.bat`
