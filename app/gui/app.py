@@ -467,10 +467,10 @@ class DPortApp(ctk.CTk):
         statusrow.pack(fill="x", pady=(11, 0))
         inner = ctk.CTkFrame(statusrow, fg_color="transparent")
         inner.pack(anchor="center")
-        self.status_dot = ctk.CTkLabel(inner, text="●", font=_f(10), text_color=MUTED)
-        self.status_dot.pack(side="left", padx=(0, 5))
+        self.status_dot = ctk.CTkLabel(inner, text="●", font=_f(13), text_color=MUTED)
+        self.status_dot.pack(side="left", padx=(0, 6))
         self.status_lbl = ctk.CTkLabel(
-            inner, text=L["st_ready"], font=_f(10), text_color=SUB, anchor="w",
+            inner, text=L["st_ready"], font=_f(12, "bold"), text_color=SUB, anchor="w",
         )
         self.status_lbl.pack(side="left")
 
