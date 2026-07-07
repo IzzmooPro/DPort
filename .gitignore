@@ -9,6 +9,12 @@ dist/
 installer/
 *.spec.tmp
 
+# Local release/build tooling
+scripts/
+packaging/
+Icon.html
+icon.ico
+
 # Local app data and logs
 app/data/*.log
 app/data/config.json
