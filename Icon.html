@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DPort İkonları</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0f1016; color: #f3f4f7; margin: 0; padding: 36px 20px 60px; }
+    h1 { text-align: center; margin: 0 0 6px; font-size: 2rem; letter-spacing: -0.5px; }
+    h1 .bolt { color: #8b93f8; }
+    p.subtitle { text-align: center; color: #767b89; margin: 0 auto 24px; font-size: 1rem; max-width: 660px; }
+
+    .palette-bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 0 auto 8px; }
+    .swatch { display: flex; align-items: center; gap: 8px; background: #181a21; border: 1px solid #242833;
+      color: #c2c6d2; padding: 8px 14px; border-radius: 999px; cursor: pointer; font-size: .9rem;
+      font-weight: 600; transition: border-color .15s, transform .1s; }
+    .swatch:hover { transform: translateY(-2px); }
+    .swatch.active { border-color: #fff; color: #fff; }
+    .swatch .dot { width: 16px; height: 16px; border-radius: 50%; }
+
+    .section-title { max-width: 1400px; margin: 34px auto 12px; font-size: .85rem; letter-spacing: 1px;
+      text-transform: uppercase; color: #767b89; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .section-title::after { content: ""; flex: 1; height: 1px; background: #242833; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+      gap: 18px; max-width: 1400px; margin: 0 auto; }
+    .card { background: #181a21; border-radius: 16px; padding: 20px 12px 14px; text-align: center;
+      border: 1px solid #242833; transition: transform .2s, box-shadow .2s, border-color .2s; }
+    .card:hover { transform: translateY(-5px); box-shadow: 0 12px 26px rgba(0,0,0,.5); border-color: #3a43b0; }
+    .icon-wrapper { width: 112px; height: 112px; margin: 0 auto 12px; filter: drop-shadow(0 5px 10px rgba(0,0,0,.4)); }
+    .icon-wrapper svg { width: 100%; height: 100%; display: block; }
+    .name { font-size: .78rem; color: #b8bcc8; margin-bottom: 9px; min-height: 1.1em; }
+    .card button { background: #5865f2; color: #fff; border: none; padding: 8px 14px; border-radius: 9px;
+      cursor: pointer; font-weight: 600; font-size: .85rem; width: 100%; transition: background .15s, transform .12s; }
+    .card button:hover { background: #4a54d4; } .card button:active { transform: scale(.97); }
+    .card button.busy { background: #3a43b0; }
+    .footer-note { text-align: center; margin: 44px auto 0; max-width: 660px; color: #767b89;
+      font-size: .92rem; line-height: 1.7; }
+    .footer-note code { background: #20232c; padding: 2px 7px; border-radius: 5px; color: #b8bcc8; }
+  </style>
+</head>
+<body>
+
+  <h1>DPort <span class="bolt">⚡</span> İkonları</h1>
+  <p class="subtitle">İstediğin rengi seç, aşağıdaki tüm motifler o renge geçsin.
+     Beğendiğine tıkla — <b>gerçek çok-boyutlu <code>.ico</code></b> (16→256 px) olarak iner.</p>
+
+  <div class="palette-bar" id="paletteBar"></div>
+
+  <div id="sections"></div>
+
+  <p class="footer-note">
+    💡 İndirdiğin dosyayı <code>app\assets\icon.ico</code> olarak kaydet, sonra <code>Build.bat</code> ile derle.
+    Tepsi ve <code>.exe</code> ikonu buradan gelir.<br>
+    Gerçek ICO kabı üretilir (16/24/32/48/64/128/256 px PNG gömülü) — Windows ve PyInstaller ile tam uyumlu.
+  </p>
+
+<script>
+  // ── Renk paletleri ──────────────────────────────────────────────────
+  const PALETTES = {
+    blurple: { label: 'Blurple',  grad: ['#3a43b0','#5865f2','#8b93f8'], glyph: '#fff', cut: '#333c9e' },
+    teal:    { label: 'Teal',     grad: ['#0e7490','#06b6d4','#67e8f9'], glyph: '#fff', cut: '#0b5566' },
+    emerald: { label: 'Emerald',  grad: ['#065f46','#10b981','#6ee7b7'], glyph: '#fff', cut: '#064e3b' },
+    purple:  { label: 'Mor',      grad: ['#5b21b6','#8b5cf6','#a78bfa'], glyph: '#fff', cut: '#4c1d95' },
+    slate:   { label: 'Slate',    grad: ['#334155','#475569','#94a3b8'], glyph: '#fff', cut: '#1e293b' },
+    crimson: { label: 'Kırmızı',  grad: ['#7f1d1d','#dc2626','#f87171'], glyph: '#fff', cut: '#641717' },
+    dark:    { label: 'Koyu',     grad: ['#141726','#1d2236','#2a3050'], glyph: '#8b93f8', cut: '#0d0f16' },
+  };
+
+  // ── Motifler (viewBox 120; g=glif rengi, cut=oyuk/koyu renk) ────────
+  const M = {
+    // DPort
+    bolt:    () => `<path d="M65 39 L46 62 L59 62 L55 81 L74 57 L61 57 Z"/>`,
+    d:       (g) => `<text x="60" y="80" font-size="60" font-weight="900" text-anchor="middle" font-family="Segoe UI, system-ui" fill="${g}">D</text>`,
+    dp:      (g) => `<text x="60" y="75" font-size="40" font-weight="900" text-anchor="middle" font-family="Segoe UI, system-ui" fill="${g}">DP</text>`,
+    forward: () => `<path d="M40 40 L40 80 L62 60 Z"/><path d="M60 40 L60 80 L82 60 Z"/>`,
+    boost:   () => `<path d="M60 34 L82 58 H70 V84 H50 V58 H38 Z"/>`,
+    link:    () => `<rect x="33" y="50" width="33" height="20" rx="10" fill="none" stroke-width="7"/><rect x="54" y="50" width="33" height="20" rx="10" fill="none" stroke-width="7"/>`,
+    // Güvenlik
+    shield:      (g,c) => `<path d="M60 26 L84 35 V57 C84 72 73 83 60 88 C47 83 36 72 36 57 V35 Z"/><path d="M62 41 L51 58 H59 L56 73 L70 53 H61 L66 41 Z" fill="${c}" stroke="none"/>`,
+    shieldCheck: () => `<path d="M60 26 L84 35 V57 C84 72 73 83 60 88 C47 83 36 72 36 57 V35 Z" fill="none" stroke-width="6"/><path d="M49 59 L57 67 L72 49" fill="none" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`,
+    lock:    (g,c) => `<rect x="42" y="52" width="36" height="30" rx="7"/><path d="M48 52 V42 a12 12 0 0 1 24 0 V52 h-7 V42 a5 5 0 0 0 -10 0 V52 Z"/><circle cx="60" cy="64" r="4" fill="${c}" stroke="none"/><rect x="58" y="64" width="4" height="10" rx="2" fill="${c}" stroke="none"/>`,
+    key:     () => `<circle cx="48" cy="50" r="13" fill="none" stroke-width="7"/><path d="M57 59 L82 84" fill="none" stroke-width="7" stroke-linecap="round"/><path d="M73 75 l7 7 M79 69 l7 7" fill="none" stroke-width="7" stroke-linecap="round"/>`,
+    radar:   () => `<circle cx="60" cy="60" r="27" fill="none" stroke-width="5"/><circle cx="60" cy="60" r="15" fill="none" stroke-width="5"/><circle cx="60" cy="60" r="4"/><path d="M60 60 L84 43" fill="none" stroke-width="5" stroke-linecap="round"/>`,
+    fingerprint: () => `<path d="M38 62 a22 22 0 0 1 44 0" fill="none" stroke-width="5" stroke-linecap="round"/><path d="M46 64 a14 14 0 0 1 28 0" fill="none" stroke-width="5" stroke-linecap="round"/><path d="M54 66 a6 6 0 0 1 12 0" fill="none" stroke-width="5" stroke-linecap="round"/><path d="M60 60 V82" fill="none" stroke-width="5" stroke-linecap="round"/>`,
+    // DNS / Ağ
+    globe:   () => `<circle cx="60" cy="60" r="27" fill="none" stroke-width="6"/><path d="M33 60 H87" fill="none" stroke-width="5"/><ellipse cx="60" cy="60" rx="12" ry="27" fill="none" stroke-width="5"/>`,
+    nodes:   () => `<circle cx="60" cy="60" r="9"/><circle cx="35" cy="39" r="7"/><circle cx="85" cy="39" r="7"/><circle cx="35" cy="81" r="7"/><circle cx="85" cy="81" r="7"/><path d="M40 43 L55 56 M80 43 L65 56 M40 77 L55 64 M80 77 L65 64" fill="none" stroke-width="5"/>`,
+    server:  (g,c) => `<rect x="30" y="24" width="60" height="30" rx="7"/><rect x="30" y="62" width="60" height="30" rx="7"/><circle cx="43" cy="39" r="3.5" fill="${c}" stroke="none"/><circle cx="43" cy="77" r="3.5" fill="${c}" stroke="none"/><rect x="52" y="36" width="28" height="6" rx="3" fill="${c}" stroke="none"/><rect x="52" y="74" width="28" height="6" rx="3" fill="${c}" stroke="none"/>`,
+    cloud:   () => `<path d="M75 54 a17 17 0 0 0 -32 -5 a15 15 0 0 0 2 30 h30 a13 13 0 0 0 0 -25 z"/>`,
+    window:  (g,c) => `<rect x="26" y="32" width="68" height="54" rx="9"/><path d="M26 48 h68" fill="none" stroke="${c}" stroke-width="4"/><circle cx="37" cy="40" r="3" fill="${c}" stroke="none"/><circle cx="47" cy="40" r="3" fill="${c}" stroke="none"/><rect x="36" y="58" width="48" height="6" rx="3" fill="${c}" stroke="none"/><rect x="36" y="70" width="30" height="6" rx="3" fill="${c}" stroke="none"/>`,
+    exchange: () => `<path d="M38 46 h30 l-9 -9 M38 46 l9 9" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M82 74 h-30 l9 -9 M82 74 l-9 9" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`,
+    signal:  () => `<circle cx="60" cy="76" r="6"/><path d="M46 62 a20 20 0 0 1 28 0" fill="none" stroke-width="7" stroke-linecap="round"/><path d="M38 52 a32 32 0 0 1 44 0" fill="none" stroke-width="7" stroke-linecap="round"/>`,
+    tunnel:  () => `<ellipse cx="60" cy="60" rx="30" ry="22" fill="none" stroke-width="6"/><path d="M48 60 h20 l-8 -8 M48 60 l8 8" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`,
+    plug:    () => `<rect x="52" y="28" width="6" height="16" rx="3"/><rect x="62" y="28" width="6" height="16" rx="3"/><rect x="45" y="44" width="30" height="20" rx="6"/><rect x="57" y="64" width="6" height="22" rx="3"/>`,
+  };
+
+  const SECTIONS = [
+    { title: 'DPort', items: [['bolt','Şimşek'],['d','D harfi'],['dp','DP'],['forward','İleri (aç)'],['boost','Boost'],['link','Bağlantı']] },
+    { title: 'Güvenlik', items: [['shield','Kalkan + şimşek'],['shieldCheck','Kalkan onay'],['lock','Kilit'],['key','Anahtar'],['radar','Tarama'],['fingerprint','Parmak izi']] },
+    { title: 'DNS / Ağ', items: [['globe','Küre'],['nodes','Ağ düğümleri'],['server','Sunucu'],['cloud','Bulut'],['window','Alan adı'],['exchange','Değişim'],['signal','Sinyal'],['tunnel','Tünel'],['plug','Fiş / port']] },
+  ];
+
+  let CURRENT = 'blurple', uid = 0;
+
+  function makeSVG(motifKey, palKey, whiteApp) {
+    const pal = PALETTES[palKey]; const id = 'g' + (uid++);
+    const glyph = whiteApp ? pal.grad[1] : pal.glyph;
+    const cut   = whiteApp ? '#ffffff' : pal.cut;
+    let defs = '', bgFill, hl = '', ring = '';
+    if (whiteApp) {
+      bgFill = '#ffffff';
+      ring = `<rect x="3.5" y="3.5" width="113" height="113" rx="30" fill="none" stroke="#e3e5fb" stroke-width="2"/>`;
+    } else {
+      const [a,b,c] = pal.grad;
+      defs += `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset=".5" stop-color="${b}"/><stop offset="1" stop-color="${c}"/></linearGradient>`;
+      defs += `<linearGradient id="${id}h" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".20"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>`;
+      bgFill = `url(#${id})`;
+      hl = `<rect x="2" y="2" width="116" height="116" rx="31" fill="url(#${id}h)"/>`;
+    }
+    const motif = M[motifKey](glyph, cut);
+    // Tile neredeyse kenara kadar (2..118), glif ~%15 buyutulmus -> dolu, iri gorunur
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs>${defs}</defs>
+      <rect x="2" y="2" width="116" height="116" rx="31" fill="${bgFill}"/>${hl}${ring}
+      <g transform="translate(60 60) scale(1.15) translate(-60 -60)" fill="${glyph}" stroke="${glyph}" stroke-linejoin="round">${motif}</g></svg>`;
+  }
+
+  function card(motifKey, palKey, name, whiteApp) {
+    const el = document.createElement('div'); el.className = 'card';
+    const wrap = document.createElement('div'); wrap.className = 'icon-wrapper';
+    wrap.innerHTML = makeSVG(motifKey, palKey, whiteApp);
+    const lbl = document.createElement('div'); lbl.className = 'name'; lbl.textContent = name;
+    const btn = document.createElement('button'); btn.textContent = '⬇  .ico indir';
+    const tag = whiteApp ? 'app' : palKey;
+    btn.addEventListener('click', () => saveIco(btn, wrap.querySelector('svg'), `dport-${motifKey}-${tag}`));
+    el.append(wrap, lbl, btn); return el;
+  }
+
+  function render() {
+    const root = document.getElementById('sections'); root.innerHTML = '';
+    // DPort bölümünün başına: uygulama logosu (beyaz, sabit)
+    SECTIONS.forEach((sec, si) => {
+      const t = document.createElement('div'); t.className = 'section-title'; t.textContent = sec.title;
+      const g = document.createElement('div'); g.className = 'grid';
+      if (si === 0) g.appendChild(card('bolt', CURRENT, 'Uygulama logosu (beyaz)', true));
+      sec.items.forEach(([k, n]) => g.appendChild(card(k, CURRENT, n, false)));
+      root.append(t, g);
+    });
+  }
+
+  // palet çubuğu
+  const bar = document.getElementById('paletteBar');
+  Object.entries(PALETTES).forEach(([k, p]) => {
+    const s = document.createElement('div'); s.className = 'swatch' + (k === CURRENT ? ' active' : '');
+    s.innerHTML = `<span class="dot" style="background:linear-gradient(135deg,${p.grad[0]},${p.grad[2]})"></span>${p.label}`;
+    s.addEventListener('click', () => {
+      CURRENT = k;
+      document.querySelectorAll('.swatch').forEach(x => x.classList.remove('active'));
+      s.classList.add('active'); render();
+    });
+    bar.appendChild(s);
+  });
+  render();
+
+  // ── Gerçek çok-boyutlu ICO üretimi ──────────────────────────────────
+  async function svgToPng(svgEl, size) {
+    const data = new XMLSerializer().serializeToString(svgEl);
+    const url = URL.createObjectURL(new Blob([data], { type: 'image/svg+xml;charset=utf-8' }));
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      const c = document.createElement('canvas'); c.width = c.height = size;
+      const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+      ctx.clearRect(0, 0, size, size); ctx.drawImage(img, 0, 0, size, size);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      return new Uint8Array(await blob.arrayBuffer());
+    } finally { URL.revokeObjectURL(url); }
+  }
+  function buildIco(entries) {
+    entries = entries.slice().sort((a, b) => b.size - a.size);  // en buyuk kare once
+    const n = entries.length, head = 6 + 16 * n;
+    let total = head; entries.forEach(e => total += e.bytes.length);
+    const buf = new ArrayBuffer(total), dv = new DataView(buf), u8 = new Uint8Array(buf);
+    dv.setUint16(0, 0, true); dv.setUint16(2, 1, true); dv.setUint16(4, n, true);
+    let off = head;
+    entries.forEach((e, i) => {
+      const p = 6 + 16 * i;
+      u8[p] = e.size >= 256 ? 0 : e.size; u8[p + 1] = e.size >= 256 ? 0 : e.size;
+      dv.setUint16(p + 4, 1, true); dv.setUint16(p + 6, 32, true);
+      dv.setUint32(p + 8, e.bytes.length, true); dv.setUint32(p + 12, off, true);
+      u8.set(e.bytes, off); off += e.bytes.length;
+    });
+    return new Blob([buf], { type: 'image/x-icon' });
+  }
+  async function saveIco(btn, svgEl, name) {
+    const old = btn.textContent; btn.textContent = 'Üretiliyor…'; btn.classList.add('busy');
+    try {
+      const sizes = [16, 24, 32, 48, 64, 128, 256], entries = [];
+      for (const s of sizes) entries.push({ size: s, bytes: await svgToPng(svgEl, s) });
+      const blob = buildIco(entries);
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name}.ico`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (e) { alert('Üretim hatası: ' + e); }
+    finally { btn.textContent = old; btn.classList.remove('busy'); }
+  }
+</script>
+
+</body>
+</html>

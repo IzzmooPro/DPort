@@ -1,0 +1,77 @@
+"""
+core/failsafe.py
+
+hosts-yonlendirmesi guvenlik agi.
+
+Discord'un engelli host'lari (discord.com, gateway... vb.) program calisirken
+127.0.0.1'e yonlendiriliyor. Program NORMAL kapanmadan olurse (cokme, Gorev
+Yoneticisi'nden kapatma, ani elektrik, mavi ekran) bu satirlar hosts'ta kalir ve
+Discord + tarayicidan discord.com TAMAMEN acilmaz.
+
+Bu modul, her oturum acilista (logon) YUKSEK YETKIYLE sessizce calisan bir
+zamanlanmis gorev kurar. Gorev, programin kendisini `--cleanup-hosts` ile
+cagirir; o da hosts'taki isaretli blogu siler. Boylece program bir daha hic
+acilmasa bile Discord en gec bir sonraki oturumda tekrar normale doner.
+"""
+import os
+import sys
+import subprocess
+
+TASK_NAME = "DPortHostsFailsafe"
+_LEGACY_TASKS = ("DiscordConnectHostsFailsafe",)
+
+_FLAGS = subprocess.CREATE_NO_WINDOW
+
+
+def _cleanup_command() -> str:
+    """hosts temizleyiciyi calistiran komut satiri (frozen exe veya betik)."""
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" --cleanup-hosts'
+    return f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}" --cleanup-hosts'
+
+
+def install_logon_failsafe() -> bool:
+    """Logon'da yuksek yetkiyle hosts temizleyen zamanlanmis gorevi kurar.
+    Once eski surumden kalmis gorevleri siler (isim degistiyse artik kalmasin)."""
+    for old in _LEGACY_TASKS:
+        try:
+            subprocess.run(["schtasks", "/Delete", "/TN", old, "/F"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="ignore", timeout=15, creationflags=_FLAGS)
+        except Exception:
+            pass
+    try:
+        r = subprocess.run(
+            ["schtasks", "/Create", "/TN", TASK_NAME,
+             "/TR", _cleanup_command(),
+             "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"],
+            capture_output=True, text=True, encoding="utf-8", errors="ignore",
+            timeout=15, creationflags=_FLAGS,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def remove_logon_failsafe() -> bool:
+    try:
+        subprocess.run(
+            ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
+            capture_output=True, text=True, encoding="utf-8", errors="ignore",
+            timeout=15, creationflags=_FLAGS,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def failsafe_installed() -> bool:
+    try:
+        r = subprocess.run(
+            ["schtasks", "/Query", "/TN", TASK_NAME],
+            capture_output=True, text=True, encoding="utf-8", errors="ignore",
+            timeout=15, creationflags=_FLAGS,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False

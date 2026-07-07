@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Build outputs
+build/
+dist/
+installer/
+*.spec.tmp
+
+# Local app data and logs
+app/data/*.log
+app/data/config.json
+*.log
+
+# Local/editor files
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Test/downloaded update artifacts
+release_builds/
+app/data/updates/
