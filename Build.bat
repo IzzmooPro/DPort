@@ -65,10 +65,10 @@ pyinstaller ^
     --noconsole ^
     --name "DPort" ^
     --uac-admin ^
+    --noupx ^
     %ICON_ARG% ^
     --exclude-module "numpy" ^
     --exclude-module "pandas" ^
-    --add-data "app\data;data" ^
     --add-data "app\assets;assets" ^
     --hidden-import "customtkinter" ^
     --hidden-import "PIL" ^
