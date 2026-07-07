@@ -16,13 +16,13 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-if not exist "dist\DPort.exe" (
-    echo [HATA] dist\DPort.exe olusmadi!
+if not exist "dist\DPort\DPort.exe" (
+    echo [HATA] dist\DPort\DPort.exe olusmadi!
     pause
     exit /b 1
 )
 echo.
-echo [OK] dist\DPort.exe hazir.
+echo [OK] dist\DPort\DPort.exe hazir.
 echo.
 echo [2/2] Kurulum (setup) olusturuluyor (Inno Setup)...
 echo.
@@ -52,7 +52,7 @@ if %errorlevel% neq 0 (
 echo.
 echo ==========================================
 echo   TAMAMLANDI!
-echo   Kurulum: installer\DPort-Setup-2.4.exe
+echo   Kurulum: installer\DPort-Setup-2.5.exe
 echo ==========================================
 echo.
 pause

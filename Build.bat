@@ -61,7 +61,7 @@ echo [*] Derleme basliyor, lutfen bekleyin...
 echo.
 
 pyinstaller ^
-    --onefile ^
+    --onedir ^
     --noconsole ^
     --name "DPort" ^
     --uac-admin ^
@@ -89,7 +89,7 @@ if %errorlevel% neq 0 (
 echo.
 echo ==========================================
 echo   Derleme tamamlandi!
-echo   EXE: dist\DPort.exe
+echo   EXE: dist\DPort\DPort.exe
 echo ==========================================
 echo.
 

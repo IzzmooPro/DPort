@@ -34,8 +34,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='DPort',
     debug=False,
@@ -52,4 +50,15 @@ exe = EXE(
     entitlements_file=None,
     uac_admin=True,
     icon=['app\\assets\\icon.ico'],
+    exclude_binaries=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='DPort',
 )

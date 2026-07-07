@@ -1,12 +1,12 @@
 ; ─────────────────────────────────────────────────────────────────────────
 ;  DPort — Inno Setup kurulum betigi
-;  Derleme: once Build.bat (PyInstaller -> dist\DPort.exe),
+;  Derleme: once Build.bat (PyInstaller -> dist\DPort\DPort.exe),
 ;           sonra bu dosyayi Inno Setup ile derle (ISCC DPort.iss).
 ;  Cikti:   installer\DPort-Setup-<surum>.exe
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "DPort"
-#define MyAppVersion "2.4"
+#define MyAppVersion "2.5"
 #define MyAppPublisher "IzzmooPro"
 #define MyAppExeName "DPort.exe"
 #define MyAppId "{{7C9E6A54-2D3B-4F81-A6E2-1B0C9D8E7F60}"
@@ -52,7 +52,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

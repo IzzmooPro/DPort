@@ -4,7 +4,7 @@ Single source for app identity used by the GUI and updater.
 """
 
 APP_NAME = "DPort"
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 APP_PUBLISHER = "IzzmooPro"
 APP_EMAIL = "IzzmooPro@gmail.com"
 APP_SIGNATURE = "IzzmooPro"
