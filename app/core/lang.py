@@ -87,19 +87,19 @@ TR = {
     "about_email":      "E-posta",
     "about_dev_name":   "IzzmooPro",
     "about_email_addr": "IzzmooPro@gmail.com",
-    "about_signature":  "Imza",
+    "about_signature":  "İmza",
     "about_purpose":    "Discord'u engele takılmadan, hızlıca ve güncel şekilde açmanı sağlar — başka bir programa gerek kalmadan.",
 
-    # Guncelleme
-    "update_title":     "Guncelleme",
-    "update_check":     "Guncellemeleri Denetle",
-    "update_available": "Yeni DPort surumu bulundu: v{version}\n\nMevcut surum: v{current}\n\nSetup dosyasi indirilsin mi?",
-    "update_current":   "DPort zaten guncel.\n\nMevcut surum: v{version}",
-    "update_no_asset":  "v{version} surumu bulundu ama indirilebilir setup dosyasi yok.\n\nGitHub Releases sayfasi acilsin mi?",
-    "update_downloaded":"Guncelleme indirildi.\n\nKurulumu baslatmak ve DPort'u kapatmak ister misin?",
-    "update_failed":    "Guncelleme kontrolu tamamlanamadi.",
-    "st_update_checking":"Guncelleme kontrol ediliyor...",
-    "st_update_downloading":"Guncelleme indiriliyor...",
+    # Güncelleme
+    "update_title":     "Güncelleme",
+    "update_check":     "Güncellemeleri Denetle",
+    "update_available": "Yeni DPort sürümü bulundu: v{version}\n\nMevcut sürüm: v{current}\n\nSetup dosyası indirilsin mi?",
+    "update_current":   "DPort zaten güncel.\n\nMevcut sürüm: v{version}",
+    "update_no_asset":  "v{version} sürümü bulundu ama indirilebilir setup dosyası yok.\n\nGitHub Releases sayfası açılsın mı?",
+    "update_downloaded":"Güncelleme indirildi.\n\nKurulumu başlatmak ve DPort'u kapatmak ister misin?",
+    "update_failed":    "Güncelleme kontrolü tamamlanamadı.",
+    "st_update_checking":"Güncelleme kontrol ediliyor...",
+    "st_update_downloading":"Güncelleme indiriliyor...",
 
     # İpuçları
     "tip_about":        "Hakkında",
