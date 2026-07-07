@@ -501,8 +501,10 @@ class DPortApp(ctk.CTk):
             if not loaded:
                 self._draw_logo(canvas, 18, H // 2, 19)
 
-            canvas.create_text(text_x, H // 2, anchor="w", text=L["title"],
+            canvas.create_text(text_x, H // 2 - 8, anchor="w", text=L["title"],
                                font=(FONT, 18, "bold"), fill=WHITE)
+            canvas.create_text(text_x, H // 2 + 12, anchor="w", text=f"v{self.VERSION}",
+                               font=(FONT, 9, "bold"), fill=BLURPLE_L)
 
             # Yonetici durumu — koyu chip + cizilmis kilit ikonu + ortalanmis metin.
             adm = self._is_admin()
@@ -534,8 +536,8 @@ class DPortApp(ctk.CTk):
             # Guvenli geri donus: duz renk baslik
             hdr = ctk.CTkFrame(self, fg_color=CARD, height=H)
             hdr.pack(fill="x")
-            ctk.CTkLabel(hdr, text=f"  {L['title']}", font=_f(16, "bold"),
-                        text_color=WHITE).pack(side="left", padx=18, pady=20)
+            ctk.CTkLabel(hdr, text=f"  {L['title']} v{self.VERSION}", font=_f(16, "bold"),
+                         text_color=WHITE).pack(side="left", padx=18, pady=20)
 
     def _draw_logo(self, canvas, cx, cy, s):
         """Beyaz yuvarlak-kare rozet + blurple simsek (hizli baglanti)."""
