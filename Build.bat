@@ -69,6 +69,9 @@ pyinstaller ^
     %ICON_ARG% ^
     --exclude-module "numpy" ^
     --exclude-module "pandas" ^
+    --add-binary "%LOCALAPPDATA%\Python\pythoncore-3.14-64\python3.dll;." ^
+    --add-binary "%LOCALAPPDATA%\Python\pythoncore-3.14-64\vcruntime140.dll;." ^
+    --add-binary "%LOCALAPPDATA%\Python\pythoncore-3.14-64\vcruntime140_1.dll;." ^
     --add-data "app\assets;assets" ^
     --hidden-import "customtkinter" ^
     --hidden-import "PIL" ^

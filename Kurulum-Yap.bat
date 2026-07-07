@@ -52,7 +52,7 @@ if %errorlevel% neq 0 (
 echo.
 echo ==========================================
 echo   TAMAMLANDI!
-echo   Kurulum: installer\DPort-Setup-2.3.exe
+echo   Kurulum: installer\DPort-Setup-2.4.exe
 echo ==========================================
 echo.
 pause
