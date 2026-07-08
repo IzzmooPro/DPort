@@ -45,6 +45,12 @@ BLOCKED_HOSTS = (
     "media.discordapp.net",
 )
 
+# Role SADECE bu host'lara tunel acar. hosts dosyasi zaten yalnizca bu adlari
+# 127.0.0.1'e yonlendirdigi icin mesru trafik bu kume ile sinirli; bu whitelist
+# baska bir yerel islemin roleyi keyfi hedeflere parcalayici proxy gibi
+# kullanmasini engeller. (Discord'un calismasini etkilemez.)
+ALLOWED_HOSTS = frozenset(BLOCKED_HOSTS)
+
 HOSTS_PATH = os.path.join(
     os.environ.get("SystemRoot", r"C:\Windows"),
     "System32", "drivers", "etc", "hosts",
@@ -226,7 +232,15 @@ class DiscordUnblocker:
             if not first:
                 return
             sni = parse_sni(first)
-            host = sni or BLOCKED_HOSTS[0]
+            # Kotuye kullanim engeli: SNI VERILMIS ama whitelist disi bir hedefse
+            # reddet (keyfi hedefe tunel actirmayi engeller). SNI okunamazsa keyfi
+            # hedef zaten belirlenemez; guvenli varsayilana (updates.discord.com,
+            # whitelist'te) duseriz — bu bazi Discord baglantilarinin calismasi icin
+            # gereklidir ve keyfi tunele izin vermez.
+            if sni and sni.lower() not in ALLOWED_HOSTS:
+                self._l(f"unblock: izin verilmeyen hedef reddedildi ({sni})")
+                return
+            host = sni if sni else BLOCKED_HOSTS[0]
             ips = self._resolve(host)
             if not ips:
                 self._l(f"unblock: {host} IP cozulemedi")

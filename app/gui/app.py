@@ -43,7 +43,6 @@ from core.paths import resource_path, user_data_path
 from core.app_info import (
     APP_EMAIL,
     APP_NAME,
-    APP_SIGNATURE,
     APP_VERSION,
     GITHUB_RELEASES_URL,
 )
@@ -90,18 +89,85 @@ def _apply_win_icon(win):
 
 
 def _place_beside(app, win, w: int, h: int):
-    """Alt pencereyi ana pencerenin sag kenarina BITISIK, ust hizali yerlestirir.
-    Ekran sagina sigmiyorsa sola gecirir."""
+    """Alt pencereyi ana pencerenin sag kenarina BITISIK, ALT KENARI ana
+    pencereyle ayni hizada yerlestirir. Ekran sagina sigmiyorsa sola gecirir."""
     try:
         app.update_idletasks()
         x = app.winfo_x() + app.winfo_width()
-        y = app.winfo_y()
         if x + w > win.winfo_screenwidth():          # saga sigmazsa sola
             x = max(0, app.winfo_x() - w)
-        y = min(y, max(0, win.winfo_screenheight() - h))
+        y = app.winfo_y() + app.winfo_height() - h   # alt kenari ana pencereyle hizala
+        y = max(0, min(y, win.winfo_screenheight() - h))
         win.geometry(f"{w}x{h}+{x}+{y}")
     except Exception:
         win.geometry(f"{w}x{h}")
+
+
+def _place_beside_top(app, win, w, h):
+    """Alt pencereyi ana pencerenin sag kenarina bitisik, UST kenari ana
+    pencereyle hizali yerlestirir. Sabitlemek icin (x, y) dondurur."""
+    try:
+        app.update_idletasks()
+        x = app.winfo_x() + app.winfo_width()
+        if x + w > win.winfo_screenwidth():          # saga sigmazsa sola
+            x = max(0, app.winfo_x() - w)
+        y = app.winfo_y()                            # ust kenari ana pencereyle hizala
+        y = max(0, min(y, win.winfo_screenheight() - h))
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        return x, y
+    except Exception:
+        win.geometry(f"{w}x{h}")
+        return None
+
+
+class _WINDOWPOS(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("hwndInsertAfter", ctypes.c_void_p),
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+        ("cx", ctypes.c_int),
+        ("cy", ctypes.c_int),
+        ("flags", ctypes.c_uint),
+    ]
+
+
+_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_uint,
+                              ctypes.c_void_p, ctypes.c_void_p)
+_GWLP_WNDPROC = -4
+_WM_WINDOWPOSCHANGING = 0x0046
+_SWP_NOMOVE = 0x0002
+
+
+def _freeze_window(win):
+    """Pencereyi TASINAMAZ yapar. Hareketi kaynaginda engeller: her
+    WM_WINDOWPOSCHANGING mesajina SWP_NOMOVE ekleyerek konum degisimini iptal
+    eder. Boylece kullanici baslik cubugundan surukleyemez ve TITREME olmaz
+    (eski 'tasindiktan sonra geri it' yontemi titriyordu)."""
+    try:
+        win.update()  # dondurmadan ONCE yerlestirme (geometry) tam uygulansin
+        u = ctypes.windll.user32
+        hwnd = u.GetParent(win.winfo_id()) or win.winfo_id()
+        setp = getattr(u, "SetWindowLongPtrW", None) or u.SetWindowLongW
+        setp.restype = ctypes.c_void_p
+        setp.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        u.CallWindowProcW.restype = ctypes.c_ssize_t
+        u.CallWindowProcW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+                                      ctypes.c_void_p, ctypes.c_void_p]
+        state = {}
+
+        @_WNDPROC
+        def _proc(hWnd, msg, wParam, lParam):
+            if msg == _WM_WINDOWPOSCHANGING and lParam:
+                ctypes.cast(lParam, ctypes.POINTER(_WINDOWPOS)).contents.flags |= _SWP_NOMOVE
+            return u.CallWindowProcW(state["old"], hWnd, msg, wParam, lParam)
+
+        state["old"] = setp(hwnd, _GWLP_WNDPROC, ctypes.cast(_proc, ctypes.c_void_p))
+        # Referanslari canli tut (GC WNDPROC'u toplarsa cokme olur)
+        win._wndproc_ref = _proc
+        win._old_wndproc = state["old"]
+    except Exception:
+        pass
 
 # Discord acilirken sistem DNS'i bu degerlere ayarlanir (Cloudflare)
 DNS_V4 = ("1.1.1.1", "1.0.0.1")
@@ -128,6 +194,8 @@ class DPortApp(ctk.CTk):
             enabled=self.cfg.get("log_enabled", True),
         )
         self._busy = False
+        self._panel = None          # ayni anda tek alt pencere (ayarlar/log/yardim/hakkinda)
+        self._active_since = None    # yol kesintisiz ne zamandir aktif (aktif sure)
         self._ping_ms = None
         self._ping_last = 0.0
         self._unblocker = DiscordUnblocker(
@@ -160,6 +228,7 @@ class DPortApp(ctk.CTk):
         self._build()
         self._fit_height()          # icerige gore yuksekligi otomatik ayarla (alt satir kesilmesin)
         self._status_tick()
+        self._uptime_tick()         # aktif sure satiri saniye saniye aksin
         # Guvenlik agi: role beklenmedik sekilde olurse hosts'u aninda temizle.
         threading.Thread(target=self._watchdog_loop, daemon=True).start()
         # Tek-ornek dinleyici: ikinci calistirma bu pencereyi one getirir.
@@ -335,6 +404,10 @@ class DPortApp(ctk.CTk):
             d.ellipse([pad, pad, S - pad, S - pad], outline=rgb, width=w)
             d.ellipse([cx - S * 0.035, S * 0.30, cx + S * 0.035, S * 0.30 + S * 0.07], fill=rgb)
             d.line([cx, S * 0.46, cx, S * 0.70], fill=rgb, width=w)
+        elif kind == "clock":                         # aktif sure
+            d.ellipse([pad, pad, S - pad, S - pad], outline=rgb, width=w)
+            d.line([cx, cy, cx, cy - S * 0.24], fill=rgb, width=w)   # dakika ibresi
+            d.line([cx, cy, cx + S * 0.17, cy], fill=rgb, width=w)   # saat ibresi
         return ctk.CTkImage(light_image=im, dark_image=im, size=(px, px))
 
     @staticmethod
@@ -400,6 +473,7 @@ class DPortApp(ctk.CTk):
             ("version", "tile",   L["dash_version"]),
             ("dns",     "globe",  L["dash_dns"]),
             ("servers", "unlock", L["dash_servers"]),
+            ("uptime",  "clock",  L["dash_uptime"]),
         ]
         r = 0
         for i, (key, icon, label) in enumerate(rows):
@@ -447,18 +521,17 @@ class DPortApp(ctk.CTk):
         bot = ctk.CTkFrame(body, fg_color="transparent")
         bot.pack(fill="x", pady=(0, 0))
 
-        # 4 ikon — fill YOK; frame icerige gore kuculup yatayda ortalanir.
+        # Ikonlar — fill YOK; frame icerige gore kuculup yatayda ortalanir.
+        # Daha belirgin: buyuk kutu + parlak (TEXT) ikon + kalin cizgi (px=20).
         iconrow = ctk.CTkFrame(bot, fg_color="transparent")
         iconrow.pack(pady=(14, 0))
         for kind, cmd in (("gear", self._open_settings),
-                          ("list", self._open_log),
                           ("help", self._open_help),
-                          ("tile", self._check_update_clicked),
                           ("info", self._open_about)):
             ctk.CTkButton(
-                iconrow, text="", image=self._ico(kind, SUB, 17),
+                iconrow, text="", image=self._ico(kind, TEXT, 19),
                 width=32, height=32, corner_radius=16,
-                fg_color=CARD, hover_color=CARD2,
+                fg_color=CARD2, hover_color=BLURPLE,
                 border_width=1, border_color=BORDER, command=cmd,
             ).pack(side="left", padx=4)
 
@@ -582,6 +655,20 @@ class DPortApp(ctk.CTk):
         # panoyu 6 sn'de bir tazele
         self.after(6000, self._status_tick)
 
+    def _uptime_tick(self):
+        """Aktif sure satirini saniye saniye canli gunceller (pano 6 sn'de bir
+        yenilenirken bu satir kronometre gibi akar)."""
+        if "uptime" in self.dash:
+            if self._active_since:
+                txt, col = self._fmt_uptime(time.time() - self._active_since), GREEN
+            else:
+                txt, col = L["val_none"], MUTED
+            try:
+                self.dash["uptime"].configure(text=txt, text_color=col)
+            except Exception:
+                pass
+        self.after(1000, self._uptime_tick)
+
     def _do_refresh_status(self):
         active = self._unblocker.is_active()
 
@@ -638,11 +725,33 @@ class DPortApp(ctk.CTk):
         self.dash["servers"].configure(
             text=L["servers_all"] if active else L["val_none"],
             text_color=GREEN if active else MUTED)
+        # Aktif sure — yol kesintisiz ne zamandir acik. Kopunca sifirlanir.
+        if active:
+            if not self._active_since:
+                self._active_since = time.time()
+            up_txt = self._fmt_uptime(time.time() - self._active_since)
+        else:
+            self._active_since = None
+            up_txt = L["val_none"]
+        if "uptime" in self.dash:
+            self.dash["uptime"].configure(
+                text=up_txt, text_color=GREEN if active else MUTED)
         # Geri alinacak bir sey varsa (yol aktif YA DA DNS degistirilmis) buton aktif.
         # Onemli: hosts yazilamayip yol acilmasa bile DNS 1.1.1.1'e cekilmis olabilir;
         # bu durumda kullanici DNS'ini geri alabilmeli.
         can_restore = active or bool(self.cfg.get("dns_backup"))
         self.btn_restore.configure(state="normal" if can_restore else "disabled")
+
+    @staticmethod
+    def _fmt_uptime(secs) -> str:
+        """Saniyeyi kronometre bicimine cevirir: 'd:ss' veya 'sa:dd:ss'."""
+        secs = max(0, int(secs))
+        h = secs // 3600
+        m = (secs % 3600) // 60
+        s = secs % 60
+        if h > 0:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
 
     @staticmethod
     def _ping_color(ms):
@@ -994,17 +1103,38 @@ class DPortApp(ctk.CTk):
         except Exception:
             pass
 
+    def _open_panel(self, cls):
+        """Alt pencereler ayni anda tek tane acik kalir. Ayni ikona tekrar
+        basilirsa acik pencere kapanir (toggle); farkli ikona basilirsa onceki
+        kapatilip yenisi acilir."""
+        existing = getattr(self, "_panel", None)
+        same = False
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    same = existing.__class__ is cls
+                    existing.destroy()
+            except Exception:
+                pass
+        self._panel = None
+        if same:
+            return
+        try:
+            self._panel = cls(self)
+        except Exception:
+            self._panel = None
+
     def _open_log(self):
-        _LogWindow(self)
+        self._open_panel(_LogWindow)
 
     def _open_settings(self):
-        _SettingsWindow(self)
+        self._open_panel(_SettingsWindow)
 
     def _open_help(self):
-        _HelpWindow(self)
+        self._open_panel(_HelpWindow)
 
     def _open_about(self):
-        _AboutWindow(self)
+        self._open_panel(_AboutWindow)
 
     def apply_language(self):
         """Dil degisince arayuzu yeniden kur."""
@@ -1084,7 +1214,13 @@ class _AboutWindow(ctk.CTkToplevel):
         self.configure(fg_color=BG)
         _apply_win_icon(self)
         self._build()
-        _place_beside(app, self, 322, 306)
+        # Yuksekligi icerige gore ayarla (alttaki aciklama metni kesilmesin;
+        # ozellikle Turkce metin daha uzun). UST kenar hizali ve sabit.
+        self.update_idletasks()
+        h = max(306, self.winfo_reqheight() + 6)
+        self.transient(app)
+        _place_beside_top(app, self, 322, h)
+        _freeze_window(self)
 
     def _build(self):
         pad = ctk.CTkFrame(self, fg_color=BG)
@@ -1103,41 +1239,36 @@ class _AboutWindow(ctk.CTkToplevel):
         except Exception:
             pass
         namebox = ctk.CTkFrame(top, fg_color="transparent")
-        namebox.pack(side="left", padx=12)
+        namebox.pack(side="left", padx=12, fill="y")
         ctk.CTkLabel(namebox, text=APP_NAME, font=_f(19, "bold"),
-                     text_color=TEXT, anchor="w").pack(anchor="w")
-        ctk.CTkLabel(namebox, text=f"v{self.app.VERSION}", font=_f(10),
-                     text_color=MUTED, anchor="w").pack(anchor="w")
-        ctk.CTkLabel(namebox, text=f"by {APP_SIGNATURE}", font=_f(10),
-                     text_color=BLURPLE_L, anchor="w").pack(anchor="w")
+                     text_color=TEXT, anchor="w").pack(anchor="w", expand=True)
 
-        ctk.CTkFrame(pad, height=1, fg_color=BORDER).pack(fill="x", pady=14)
+        ctk.CTkFrame(pad, height=1, fg_color=BORDER).pack(fill="x", pady=10)
 
-        # Bilgi karti — Gelistirici / E-posta
+        # Bilgi karti — Surum / Gelistirici / E-posta
         info = ctk.CTkFrame(pad, fg_color=CARD, corner_radius=12,
                             border_width=1, border_color=BORDER)
         info.pack(fill="x")
         info.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(info, text=L["about_dev"], font=_f(11), text_color=MUTED,
-                     anchor="w").grid(row=0, column=0, sticky="w", padx=(14, 10), pady=(12, 6))
-        ctk.CTkLabel(info, text=L["about_dev_name"], font=_f(11, "bold"), text_color=TEXT,
-                     anchor="e").grid(row=0, column=1, sticky="e", padx=(0, 14), pady=(12, 6))
-        ctk.CTkLabel(info, text=L["about_email"], font=_f(11), text_color=MUTED,
-                     anchor="w").grid(row=1, column=0, sticky="w", padx=(14, 10), pady=(6, 12))
+        ctk.CTkLabel(info, text=L["about_version"], font=_f(12), text_color=MUTED,
+                     anchor="w").grid(row=0, column=0, sticky="w", padx=(14, 10), pady=(11, 4))
+        ctk.CTkLabel(info, text=f"v{self.app.VERSION}", font=_f(12, "bold"), text_color=TEXT,
+                     anchor="e").grid(row=0, column=1, sticky="e", padx=(0, 14), pady=(11, 4))
+        ctk.CTkLabel(info, text=L["about_dev"], font=_f(12), text_color=MUTED,
+                     anchor="w").grid(row=1, column=0, sticky="w", padx=(14, 10), pady=4)
+        ctk.CTkLabel(info, text=L["about_dev_name"], font=_f(12, "bold"), text_color=TEXT,
+                     anchor="e").grid(row=1, column=1, sticky="e", padx=(0, 14), pady=4)
+        ctk.CTkLabel(info, text=L["about_email"], font=_f(12), text_color=MUTED,
+                     anchor="w").grid(row=2, column=0, sticky="w", padx=(14, 10), pady=(4, 11))
         mail = ctk.CTkLabel(info, text=L["about_email_addr"],
-                            font=ctk.CTkFont(FONT, 11, underline=True),
+                            font=ctk.CTkFont(FONT, 12, underline=True),
                             text_color=BLURPLE_L, anchor="e", cursor="hand2")
-        mail.grid(row=1, column=1, sticky="e", padx=(0, 14), pady=(6, 12))
+        mail.grid(row=2, column=1, sticky="e", padx=(0, 14), pady=(4, 11))
         mail.bind("<Button-1>", lambda e: self._mail())
 
-        ctk.CTkLabel(info, text=L["about_signature"], font=_f(11), text_color=MUTED,
-                     anchor="w").grid(row=2, column=0, sticky="w", padx=(14, 10), pady=(0, 12))
-        ctk.CTkLabel(info, text=APP_SIGNATURE, font=_f(11, "bold"), text_color=BLURPLE_L,
-                     anchor="e").grid(row=2, column=1, sticky="e", padx=(0, 14), pady=(0, 12))
-
         # Kisa amac (en alt)
-        ctk.CTkLabel(pad, text=L["about_purpose"], font=_f(10), text_color=SUB,
-                     anchor="w", justify="left", wraplength=282).pack(anchor="w", pady=(16, 0))
+        ctk.CTkLabel(pad, text=L["about_purpose"], font=_f(11), text_color=SUB,
+                     anchor="w", justify="left", wraplength=282).pack(anchor="w", pady=(12, 0))
 
     def _mail(self):
         try:
@@ -1213,7 +1344,12 @@ class _HelpWindow(ctk.CTkToplevel):
         self.configure(fg_color=BG)
         _apply_win_icon(self)
         self._build()
-        _place_beside(app, self, 384, 470)
+        # Yardim penceresi ana pencereyle ayni yukseklik: alt+ust hizali, icerik
+        # kaydirilabilir alani doldurur (bos alan kalmaz). Ust hizali ve sabit.
+        app.update_idletasks()
+        self.transient(app)
+        _place_beside_top(app, self, 384, max(470, app.winfo_height()))
+        _freeze_window(self)
 
     def _build(self):
         ctk.CTkLabel(
@@ -1297,10 +1433,15 @@ class _SettingsWindow(ctk.CTkToplevel):
         self.title(L["settings_title"])
         self.resizable(False, False)
         self.configure(fg_color=BG)
-        self.grab_set()
         _apply_win_icon(self)
         self._build()
-        _place_beside(app, self, 320, 424)
+        # Yuksekligi icerige gore ayarla (altta bosluk kalmasin), UST kenar hizali
+        # ve sabit (kullanici tasiyamaz).
+        self.update_idletasks()
+        h = self.winfo_reqheight() + 6
+        self.transient(app)
+        _place_beside_top(app, self, 320, h)
+        _freeze_window(self)
 
     def _build(self):
         ctk.CTkLabel(

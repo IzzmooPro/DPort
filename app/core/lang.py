@@ -18,6 +18,7 @@ TR = {
     "dash_dns":         "Sistem DNS",
     "dash_ping":        "Gateway Gecikmesi",
     "dash_servers":     "Açılan Sunucular",
+    "dash_uptime":      "Aktif Süre",
     "val_active":       "● Aktif",
     "val_inactive":     "○ Kapalı",
     "val_auto":         "Otomatik (DHCP)",
@@ -83,11 +84,11 @@ TR = {
 
     # Hakkında
     "about_title":      "Hakkında",
+    "about_version":    "Sürüm",
     "about_dev":        "Geliştirici",
     "about_email":      "E-posta",
     "about_dev_name":   "IzzmooPro",
     "about_email_addr": "IzzmooPro@gmail.com",
-    "about_signature":  "İmza",
     "about_purpose":    "Discord'u engele takılmadan, hızlıca ve güncel şekilde açmanı sağlar — başka bir programa gerek kalmadan.",
 
     # Güncelleme
@@ -117,6 +118,10 @@ TR = {
          "DPort'u yönetici olarak çalıştır: kısayola sağ tık → “Yönetici olarak çalıştır”. Program hosts dosyasına yazabilmek için yönetici olmalı."),
         ("“Güvenli DNS erişimi yok” yazıyor",
          "Bulunduğun ağ 1.1.1.1'i engelliyor olabilir. Farklı bir ağ ya da telefon hotspot'u dene."),
+        ("“Aktif ağ adaptörü bulunamadı” yazıyor",
+         "İnternet bağlantın kapalı olabilir. Wi-Fi ya da kablolu (Ethernet) bağlantının açık ve bağlı olduğundan emin olup tekrar “Discord'u Aç”a bas."),
+        ("“Discord bulunamadı” yazıyor",
+         "Discord bilgisayarında kurulu değil ya da farklı bir konuma kurulmuş olabilir. discord.com'dan indirip kurduktan sonra tekrar dene."),
         ("Discord hâlâ güncellenmiyor",
          "Discord'u tepsi dahil tamamen kapat, sonra DPort'ta “Discord'u Aç”a tekrar bas. Böylece güncelleyici baştan çalışır."),
         ("Discord ya da tarayıcıda discord.com hiç açılmıyor",
@@ -138,6 +143,7 @@ EN = {
     "dash_dns":         "System DNS",
     "dash_ping":        "Gateway Latency",
     "dash_servers":     "Unblocked Hosts",
+    "dash_uptime":      "Active Time",
     "val_active":       "● Active",
     "val_inactive":     "○ Off",
     "val_auto":         "Automatic (DHCP)",
@@ -195,11 +201,11 @@ EN = {
     "close_remember":   "Remember this, don't ask again",
 
     "about_title":      "About",
+    "about_version":    "Version",
     "about_dev":        "Developer",
     "about_email":      "E-mail",
     "about_dev_name":   "IzzmooPro",
     "about_email_addr": "IzzmooPro@gmail.com",
-    "about_signature":  "Signature",
     "about_purpose":    "Opens Discord for you — no block, fast, and up to date, without needing any other app.",
 
     "update_title":     "Update",
@@ -226,6 +232,10 @@ EN = {
          "Run DPort as administrator: right-click the shortcut → “Run as administrator”. It needs admin to write the hosts file."),
         ("“No secure DNS access”",
          "Your network may block 1.1.1.1. Try a different network or a phone hotspot."),
+        ("“No active network adapter”",
+         "Your internet connection may be off. Make sure Wi-Fi or Ethernet is connected, then press “Open Discord” again."),
+        ("“Discord not found”",
+         "Discord may not be installed, or it's in a different location. Download and install it from discord.com, then try again."),
         ("Discord still won't update",
          "Fully close Discord (including the tray), then press “Open Discord” again so the updater runs from scratch."),
         ("Discord or discord.com won't open at all",

@@ -1,0 +1,5 @@
+# DPort - Python bagimliliklari
+# Kurulum: pip install -r requirements.txt
+customtkinter
+Pillow
+pystray

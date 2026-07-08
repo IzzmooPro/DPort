@@ -9,10 +9,16 @@ from typing import List
 
 
 class LogManager:
-    def __init__(self, log_path: str, enabled: bool = True, mirror_console: bool = True):
+    # Log dosyasi bu boyutu asinca son yarisi tutulur, eskisi atilir (sinirsiz
+    # buyumeyi onler; son kayitlar her zaman elde kalir).
+    MAX_BYTES = 1_000_000  # ~1 MB
+
+    def __init__(self, log_path: str, enabled: bool = True, mirror_console: bool = True,
+                 max_bytes: int = MAX_BYTES):
         self.log_path = log_path
         self.enabled = enabled
         self.mirror_console = mirror_console
+        self.max_bytes = max_bytes
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     def write(self, message: str):
@@ -27,6 +33,21 @@ class LogManager:
         try:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
+            self._rotate_if_needed()
+        except Exception:
+            pass
+
+    def _rotate_if_needed(self):
+        """Dosya MAX_BYTES'i asarsa son yarisini tutup basini atar (satir
+        butunlugu korunur). Boylece log sinirsiz buyumez, son kayitlar kalir."""
+        try:
+            if self.max_bytes <= 0 or os.path.getsize(self.log_path) <= self.max_bytes:
+                return
+            with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            keep = lines[len(lines) // 2:]          # son yariyi tut
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                f.write("".join(keep))
         except Exception:
             pass
 

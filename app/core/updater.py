@@ -5,6 +5,7 @@ Checks GitHub Releases for a newer DPort setup and downloads it on demand.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -87,8 +88,30 @@ def check_latest_release(current_version: str) -> dict:
         "release_url": release.get("html_url"),
         "asset_name": asset.get("name") if asset else None,
         "download_url": asset.get("browser_download_url") if asset else None,
+        # GitHub asset digest'i (or. "sha256:abc..."). Varsa indirmeyi dogrulariz;
+        # eski release'lerde bulunmayabilir, o zaman dogrulama atlanir.
+        "digest": asset.get("digest") if asset else None,
         "body": release.get("body") or "",
     }
+
+
+def _digest_matches(path: str, digest: Optional[str]) -> bool:
+    """Indirilen dosyanin SHA256'sini GitHub'in verdigi digest ile karsilastirir.
+
+    digest bicimi: "sha256:<hex>". digest yoksa ya da desteklenmeyen bir
+    algoritmaysa True doner (dogrulama atlanir; eski release'ler bozulmaz).
+    Yalnizca sha256 verilip DE UYUSMAZSA False doner."""
+    if not digest or ":" not in digest:
+        return True
+    algo, _, expected = digest.partition(":")
+    if algo.strip().lower() != "sha256" or not expected.strip():
+        return True
+    expected = expected.strip().lower()
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 256), b""):
+            h.update(chunk)
+    return h.hexdigest() == expected
 
 
 def _safe_filename(name: str) -> str:
@@ -117,6 +140,9 @@ def download_update(info: dict, dest_dir: str, timeout: int = 30) -> str:
                 if not chunk:
                     break
                 f.write(chunk)
+        # Dosya butunlugunu dogrula (GitHub digest varsa). Uyusmazsa kurma.
+        if not _digest_matches(tmp_path, info.get("digest")):
+            raise UpdateError("Indirilen dosya dogrulanamadi (SHA256 uyusmadi).")
         os.replace(tmp_path, final_path)
         return final_path
     except Exception as exc:
