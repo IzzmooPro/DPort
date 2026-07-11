@@ -101,11 +101,13 @@ Bilgisayarında **SplitWire, GoodbyeDPI, Zapret, WireSock/WARP** gibi başka bir
 
 ## 💻 Kaynaktan Çalıştırmak
 
-Python kuruluysa, kurulum yapmadan kaynaktan denemek için:
+Python kuruluysa, kurulum yapmadan doğrudan kaynaktan çalıştırabilirsin:
 
 ```bat
-scripts\Calistir.bat
+python app/main.py
 ```
+
+> Gerekli kütüphaneleri kendin kurmalısın (bkz. `requirements.txt`). Program bunları otomatik kurmaz veya denetlemez; eksik bir kütüphane varsa onu sen tamamlarsın.
 
 ## ⚖️ Sorumluluk Reddi
 
@@ -230,11 +232,13 @@ If your PC already has another DPI-bypass / tunneling tool such as **SplitWire, 
 
 ## 💻 Run from source
 
-If Python is installed, try it from source without installing:
+If Python is installed, you can run it straight from source without installing:
 
 ```bat
-scripts\Calistir.bat
+python app/main.py
 ```
+
+> You must install the required libraries yourself (see `requirements.txt`). The program does not auto-install or check them; if a library is missing, it's up to you to add it.
 
 ## ⚖️ Disclaimer
 
