@@ -195,6 +195,8 @@ class DPortApp(ctk.CTk):
         )
         self._busy = False
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
+        self._status_timer_id = None  # tek periyodik pano zinciri (after id)
+        self._status_refreshing = False  # ayni anda tek yenileme thread'i
         self._tray = None           # aktif tepsi ikonu (cift ikon onlemek icin)
         self._panel = None          # ayni anda tek alt pencere (ayarlar/log/yardim/hakkinda)
         self._active_since = None    # yol kesintisiz ne zamandir aktif (aktif sure)
@@ -665,9 +667,22 @@ class DPortApp(ctk.CTk):
 
     # ─────────────────────────── Durum panosu ───────────────────────────
     def _status_tick(self):
+        """Tek periyodik zincir: yalnizca kendi kendini yeniden zamanlar.
+        Baska hicbir yerden cagrilmamali (aksi halde paralel sonsuz zincirler
+        birikir) — manuel/olay-tetikli yenileme icin _refresh_status_async
+        kullanilir."""
+        if not self._alive:
+            return
+        self._refresh_status_async()
+        self._status_timer_id = self.after(6000, self._status_tick)
+
+    def _refresh_status_async(self):
+        """Tek seferlik pano yenilemesi baslatir; ayni anda yalnizca bir
+        yenileme thread'i calisir (ust uste binen istekler yut sayilir)."""
+        if not self._alive or self._status_refreshing:
+            return
+        self._status_refreshing = True
         threading.Thread(target=self._do_refresh_status, daemon=True).start()
-        # panoyu 6 sn'de bir tazele
-        self.after(6000, self._status_tick)
 
     def _uptime_tick(self):
         """Aktif sure satirini saniye saniye canli gunceller (pano 6 sn'de bir
@@ -684,41 +699,44 @@ class DPortApp(ctk.CTk):
         self.after(1000, self._uptime_tick)
 
     def _do_refresh_status(self):
-        active = self._unblocker.is_active()
-
-        # Discord surumu
-        ver = installed_discord_version()
-        ver_txt = ver if ver else L["val_not_installed"]
-
-        # Sistem DNS (ilk aktif adaptor)
-        dns_txt = L["val_unknown"]
         try:
-            adapters = get_active_adapters()
-            if adapters:
-                dns = get_dns(adapters[0]["name"])
-                v4 = dns["ipv4"]
-                if v4["dhcp"] or not v4["primary"]:
-                    dns_txt = L["val_auto"]
-                else:
-                    dns_txt = v4["primary"]
-        except Exception:
-            pass
+            active = self._unblocker.is_active()
 
-        # Gateway gecikmesi — sadece yol aktifken ve ~12 sn'de bir olc
-        ping_txt = L["val_none"]
-        if active:
-            if time.time() - self._ping_last > 12:
-                self._ping_ms = self._measure_ping()
-                self._ping_last = time.time()
-            ping_txt = f"{self._ping_ms} ms" if self._ping_ms else L["val_measuring"]
+            # Discord surumu
+            ver = installed_discord_version()
+            ver_txt = ver if ver else L["val_not_installed"]
 
-        if not self._alive:   # kapandiysa panoyu guncelleme
-            return
-        try:
-            self.after(0, lambda: self._apply_status(
-                active, ver_txt, dns_txt, ping_txt, ver, self._ping_ms if active else None))
-        except Exception:
-            pass
+            # Sistem DNS (ilk aktif adaptor)
+            dns_txt = L["val_unknown"]
+            try:
+                adapters = get_active_adapters()
+                if adapters:
+                    dns = get_dns(adapters[0]["name"])
+                    v4 = dns["ipv4"]
+                    if v4["dhcp"] or not v4["primary"]:
+                        dns_txt = L["val_auto"]
+                    else:
+                        dns_txt = v4["primary"]
+            except Exception:
+                pass
+
+            # Gateway gecikmesi — sadece yol aktifken ve ~12 sn'de bir olc
+            ping_txt = L["val_none"]
+            if active:
+                if time.time() - self._ping_last > 12:
+                    self._ping_ms = self._measure_ping()
+                    self._ping_last = time.time()
+                ping_txt = f"{self._ping_ms} ms" if self._ping_ms else L["val_measuring"]
+
+            if not self._alive:   # kapandiysa panoyu guncelleme
+                return
+            try:
+                self.after(0, lambda: self._apply_status(
+                    active, ver_txt, dns_txt, ping_txt, ver, self._ping_ms if active else None))
+            except Exception:
+                pass
+        finally:
+            self._status_refreshing = False
 
     def _apply_status(self, active, ver_txt, dns_txt, ping_txt, ver=None, ping_ms=None):
         if not self.dash:
@@ -847,7 +865,7 @@ class DPortApp(ctk.CTk):
         finally:
             self._busy = False
             self.after(0, lambda: self.btn_open.configure(state="normal", text=L["btn_open"]))
-            self.after(0, self._status_tick)
+            self.after(0, self._refresh_status_async)
 
     # ─────────────────────────── Normale Don ───────────────────────────
     def _restore_normal(self):
@@ -868,7 +886,7 @@ class DPortApp(ctk.CTk):
             self._st(L["st_restored"], GREEN)
         finally:
             self._busy = False
-            self.after(0, self._status_tick)
+            self.after(0, self._refresh_status_async)
 
     # ─────────────────────────── Unblock motoru ───────────────────────────
     def _enable_discord_unblock(self) -> bool:
@@ -978,15 +996,20 @@ class DPortApp(ctk.CTk):
     def _restore_dns(self):
         """YALNIZCA bizim degistirdigimiz (yedekteki) adaptorleri orijinal ayarina
         dondurur — statik ise statik, DHCP ise DHCP. Dokunmadigimiz adaptorlere
-        (yedekte olmayan) HIC karisilmaz; kullanicinin manuel DNS'i bozulmaz."""
-        backup = self.cfg.get("dns_backup") or {}
-        try:
-            for name, snap in backup.items():
+        (yedekte olmayan) HIC karisilmaz; kullanicinin manuel DNS'i bozulmaz.
+        Basarisiz adaptorler yedekte kalir (bir sonraki denemede tekrar denenir);
+        yalnizca basariyla geri yuklenenler yedekten cikarilir."""
+        backup = dict(self.cfg.get("dns_backup") or {})
+        remaining = dict(backup)
+        for name, snap in backup.items():
+            try:
                 ok, msg = restore_dns(name, snap)
-                self.log_mgr.write(f"DNS geri | {name} | {'OK' if ok else msg}")
-        except Exception as e:
-            self.log_mgr.write(f"DNS geri | hata | {e}")
-        self.cfg.set("dns_backup", None)
+            except Exception as e:
+                ok, msg = False, str(e)
+            self.log_mgr.write(f"DNS geri | {name} | {'OK' if ok else msg}")
+            if ok:
+                remaining.pop(name, None)
+        self.cfg.set("dns_backup", remaining or None)
 
     def _ensure_failsafe(self):
         """Logon hosts-temizleyici gorevini kurar (sessiz guvenlik agi). Gorev
@@ -1169,6 +1192,11 @@ class DPortApp(ctk.CTk):
     def destroy(self):
         # Tamamen kapanirken yonlendirmeyi geri al, roleyi durdur, IPC'yi + tepsiyi kapat.
         self._alive = False   # arka plan thread'leri artik Tk'ye dokunmasin
+        try:
+            if self._status_timer_id is not None:
+                self.after_cancel(self._status_timer_id)
+        except Exception:
+            pass
         self._stop_tray()
         try:
             if getattr(self, "_ipc_srv", None):

@@ -198,34 +198,45 @@ def restore_dns(adapter_name: str, snapshot: Dict) -> Tuple[bool, str]:
         if r.returncode != 0:
             errors.append(f"IPv4 statik: {(r.stderr or r.stdout).strip()}")
         if v4.get("secondary"):
-            subprocess.run(
+            r = subprocess.run(
                 ["netsh", "interface", "ip", "add", "dnsservers",
                  adapter_name, v4["secondary"], "index=2"],
                 capture_output=True, text=True, encoding="utf-8", errors="ignore",
                 timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
             )
+            if r.returncode != 0:
+                errors.append(f"IPv4 ikincil: {(r.stderr or r.stdout).strip()}")
 
-    # --- IPv6 (olmayabilir; hatalari kritik sayma) ---
+    # --- IPv6 (olmayabilir; hatalari kritik sayma, ama gorunur yap) ---
     if v6.get("dhcp", True) or not v6.get("primary"):
-        subprocess.run(
+        r = subprocess.run(
             ["netsh", "interface", "ipv6", "set", "dnsservers", adapter_name, "dhcp"],
             capture_output=True, text=True, encoding="utf-8", errors="ignore",
             timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        if r.returncode != 0:
+            print(f"[DNS] IPv6 DHCP geri yukleme uyarisi ({adapter_name}): "
+                  f"{(r.stderr or r.stdout).strip()}")
     else:
-        subprocess.run(
+        r = subprocess.run(
             ["netsh", "interface", "ipv6", "set", "dnsservers",
              adapter_name, "static", v6["primary"], "validate=no"],
             capture_output=True, text=True, encoding="utf-8", errors="ignore",
             timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        if r.returncode != 0:
+            print(f"[DNS] IPv6 statik geri yukleme uyarisi ({adapter_name}): "
+                  f"{(r.stderr or r.stdout).strip()}")
         if v6.get("secondary"):
-            subprocess.run(
+            r = subprocess.run(
                 ["netsh", "interface", "ipv6", "add", "dnsservers",
                  adapter_name, v6["secondary"], "index=2", "validate=no"],
                 capture_output=True, text=True, encoding="utf-8", errors="ignore",
                 timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
             )
+            if r.returncode != 0:
+                print(f"[DNS] IPv6 ikincil geri yukleme uyarisi ({adapter_name}): "
+                      f"{(r.stderr or r.stdout).strip()}")
 
     if errors:
         return False, "\n".join(errors)
