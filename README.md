@@ -91,6 +91,14 @@ DPort bir **VPN değildir** ve trafiğini hiçbir yere "taşımaz" — sadece Di
 
 Somut olarak DPort şunu yapar: bilgisayarında **kendi içinde**, `127.0.0.1` üzerinde küçük bir yerel röle çalıştırır; yalnızca engellenen 5 Discord adresini (`updates.discord.com`, `discord.com`, `gateway.discord.gg`, `cdn.discordapp.com`, `media.discordapp.net`) bu röleye yönlendirip, ilk bağlantı paketini (TLS ClientHello) küçük parçalara bölerek Türkiye'deki DPI engelini aşar. Röle şifreli veriyi **açmaz/okumaz** — sadece paketi Discord'un gerçek sunucusuna iletir; şifre çözme uçtan uca Discord ile senin cihazın arasında kalır. Bunun dışında yaptığı tek şey, sistem DNS'ini geçici olarak Cloudflare'in genel sunucusu **1.1.1.1**'e çevirmektir. Tarayıcı geçmişine, şifrelere, mesajlara veya Discord dışındaki hiçbir uygulamanın trafiğine dokunmaz.
 
+## ⚠️ Başka DPI/Bypass Araçlarıyla Birlikte Kullanım
+
+Bilgisayarında **SplitWire, GoodbyeDPI, Zapret, WireSock/WARP** gibi başka bir DPI aşma / tünelleme aracı varsa, DPort ile **aynı anda çalıştırmaman** önemli. İkisi de aynı Discord trafiğini farklı yöntemlerle (tünel, yerel proxy, çekirdek seviyesi paket parçalama) ele geçirmeye çalıştığı için birbirine karışıp Discord'un hiç bağlanmamasına veya düzensiz çalışmasına yol açabilirler.
+
+> ⚠️ **Önemli:** Bu tür araçların çoğu (örneğin SplitWire) yalnızca **penceresini kapatmakla durmaz** — arka planda çalışmaya devam eden bir **Windows servisi veya zamanlanmış görev** bırakır. Yani "kapattım" sanıp DPort'a geçsen bile o araç arka planda hâlâ aktif olabilir. Bu yüzden DPort'a geçmeden önce diğer aracın yalnız penceresini değil, **servisini/zamanlanmış görevini de durdurman ya da onu tamamen kaldırman** gerekir.
+
+**DPort bu açıdan farklıdır:** arka planda çalışmaya devam eden bir tünel, proxy ya da paket yakalama servisi **bırakmaz**. DPort'u kapattığın anda yerel röle durur, `hosts` ve DNS değişiklikleri geri alınır. DPort'un kurduğu tek zamanlanmış görev (`DPortHostsFailsafe`), bir bypass'ı ayakta tutmak için **değil**, tam tersine — program beklenmedik şekilde çökerse arta kalan `hosts` satırlarını bir sonraki oturum açılışında **temizlemek** içindir; hiçbir trafiği izlemez veya yönlendirmez. Kaldırıcı bu görevi de siler.
+
 ## 💻 Kaynaktan Çalıştırmak
 
 Python kuruluysa, kurulum yapmadan kaynaktan denemek için:
@@ -211,6 +219,14 @@ DPort is **not a VPN**, and it never "routes" your traffic anywhere — it just 
 | Who decrypts it? | The VPN server (on some VPNs) | No one — end-to-end encryption (TLS) stays between Discord and your PC |
 
 Concretely, DPort runs a tiny local relay on `127.0.0.1`, **on your own machine**. It redirects only the 5 blocked Discord addresses (`updates.discord.com`, `discord.com`, `gateway.discord.gg`, `cdn.discordapp.com`, `media.discordapp.net`) to that relay, and splits the first connection packet (TLS ClientHello) into small fragments to get past Turkey's DPI block. The relay **never opens or reads** the encrypted data — it just forwards the packet to Discord's real server; decryption stays end-to-end between Discord and your device. The only other thing it does is temporarily point your system DNS to Cloudflare's public **1.1.1.1** resolver. It never touches your browser history, passwords, messages, or the traffic of any app other than Discord.
+
+## ⚠️ Using It Alongside Other DPI/Bypass Tools
+
+If your PC already has another DPI-bypass / tunneling tool such as **SplitWire, GoodbyeDPI, Zapret, or WireSock/WARP**, it's important **not to run it at the same time** as DPort. Both try to take over the same Discord traffic with different methods (tunnel, local proxy, kernel-level packet fragmentation), so they can interfere with each other and cause Discord to fail to connect or behave erratically.
+
+> ⚠️ **Important:** Most of these tools (SplitWire, for example) **don't stop when you just close their window** — they leave a **Windows service or scheduled task** that keeps running in the background. So even if you think you "closed" it and switched to DPort, that tool may still be active behind the scenes. Before switching to DPort, you should stop not just its window but its **service/scheduled task as well, or uninstall it entirely**.
+
+**DPort is different here:** it leaves **no** tunnel, proxy, or packet-capture service running in the background. The moment you close DPort, the local relay stops and the `hosts` and DNS changes are reverted. The only scheduled task DPort creates (`DPortHostsFailsafe`) exists **not** to keep a bypass alive, but the opposite — to **clean up** any leftover `hosts` lines on the next logon if the program ever crashes; it never monitors or routes any traffic. The uninstaller removes this task too.
 
 ## 💻 Run from source
 
