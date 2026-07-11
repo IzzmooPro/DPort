@@ -19,6 +19,7 @@ Nasil calisir:
   4. Sonrasi seffaf TCP tunelidir; TLS uctan uca client ile sunucu arasinda kalir
      (role sertifikayi gormez, MITM yoktur).
 """
+import errno
 import json
 import os
 import stat
@@ -26,7 +27,7 @@ import socket
 import threading
 import time
 import urllib.request
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 # hosts uzerinden 127.0.0.1'e yonlendirilecek, DPI ile engellenen Discord host'lari.
 # Olcum: bu host'lar dogrudan 0/5 (engelli), relay uzerinden 5/5 (0.1 sn).
@@ -331,19 +332,54 @@ class DiscordUnblocker:
 
 # ──────────────────────────────── hosts yonetimi ────────────────────────────────
 def _read_hosts() -> Optional[str]:
+    # newline="" ONEMLI: evrensel satir-sonu cevirisini kapatir, boylece
+    # kullanicinin CRLF satir sonlari LF'ye cevrilmeden BYTE-birebir korunur.
+    # errors="surrogateescape": UTF-8 olmayan (yerel kod sayfasi/gecersiz) 3. taraf
+    # byte'lari surrogate kod noktalarina esler; ayni error-handler ile geri
+    # yazildiginda ORIJINAL byte'lara donusur. Boylece "byte-birebir DPort disi
+    # koruma" gecersiz byte iceren hosts'ta da gercekten dogru olur (eski
+    # errors='ignore' bu byte'lari sessizce dusuruyordu).
     try:
-        with open(HOSTS_PATH, "r", encoding="utf-8", errors="ignore") as f:
+        with open(HOSTS_PATH, "r", encoding="utf-8", errors="surrogateescape", newline="") as f:
             return f.read()
     except Exception:
         return None
 
 
 LAST_HOSTS_ERROR = ""
+LAST_HOSTS_WINERROR: Optional[int] = None
+
+# hosts dosyasina yazma/okuma islemlerini (add/remove/aktiflik) TEK sirada tutar;
+# ayni anda iki thread'in (or. _open_discord_w ile watchdog) dosyayi ezmesini onler.
+_HOSTS_LOCK = threading.RLock()
+
+# Windows winerror kodlari (hata sinifi teshisi icin):
+_WINERR_ACCESS_DENIED = 5       # ERROR_ACCESS_DENIED — gercek yetki VEYA AV/controlled-folder
+_WINERR_SHARING_VIOLATION = 32  # ERROR_SHARING_VIOLATION — dosyayi baska surec tutuyor
+_WINERR_LOCK_VIOLATION = 33     # ERROR_LOCK_VIOLATION — kilitli bolge
+
+# Bu winerror'lar GECICI kabul edilir (kisa sure sonra yeniden denenir). 5 (access
+# denied) DPort zaten yonetici oldugu icin genelde AV/oyun anti-cheat kaynakli
+# GECICI kilittir; kalici yetki reddi (elevation yok) ayrimini UST katman (app.py)
+# mesajlarken winerror=5 + admin-degil kontroluyle yapar.
+_TRANSIENT_WINERRORS = (_WINERR_ACCESS_DENIED, _WINERR_SHARING_VIOLATION, _WINERR_LOCK_VIOLATION)
+
+# Artan backoff (saniye). add: ~11 sn toplam (8 deneme) — log kanitindaki ~14 sn'lik
+# gecici kilidi buyuk olcude yakalar. remove: kisa (~1 sn) — acilis/watchdog yolunu
+# dondurmaz; kalan temizligi watchdog + logon failsafe zaten toplar.
+_ADD_BACKOFFS = (0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0)
+_REMOVE_BACKOFFS = (0.3, 0.6)
 
 
 def last_hosts_error() -> str:
     """Son hosts yazma hatasinin acik metni (teshis icin)."""
     return LAST_HOSTS_ERROR
+
+
+def last_hosts_winerror() -> Optional[int]:
+    """Son hosts yazma hatasinin Windows winerror kodu (yoksa None). Ust katman
+    'gercek yetki reddi mi, gecici kilit mi' ayrimini bununla yapar."""
+    return LAST_HOSTS_WINERROR
 
 
 def _clear_readonly():
@@ -356,28 +392,76 @@ def _clear_readonly():
         pass
 
 
-def _write_hosts(content: str) -> bool:
-    global LAST_HOSTS_ERROR
+def _is_transient_write_error(winerr: Optional[int], err_no: Optional[int]) -> bool:
+    """Yazma hatasinin GECICI (yeniden denenebilir) olup olmadigini kestirir.
+    Sharing/lock violation ve (yonetici oldugumuz icin) access-denied gecici sayilir;
+    winerror yoksa saf errno EACCES/EAGAIN de gecici kabul edilir. ENOSPC (disk dolu)
+    gibi kalici hatalar yeniden DENENMEZ."""
+    if winerr in _TRANSIENT_WINERRORS:
+        return True
+    if winerr is None and err_no in (errno.EACCES, errno.EAGAIN):
+        return True
+    return False
+
+
+def _write_hosts_once(content: str) -> Tuple[bool, str, Optional[int], bool]:
+    """hosts'a TEK yazma denemesi. Donus: (basari, hata_metni, winerror, gecici_mi).
+
+    Yerinde 'r+' yazimi kullanilir:
+      - Dosya var olan handle uzerinden yazildigi icin ACL/owner DEGISMEZ
+        (os.replace gibi guvenlik tanimlayicisini temp dosyayla ezmez).
+      - 'w' modunun aksine acilista dosyayi 0'a INDIRMEZ; once yeni icerik yazilir,
+        sonra truncate ile fazlalik atilir. Boylece yazma yarida kesilse bile dosya
+        BOS kalmaz (kullanicinin buyuk 3. taraf listesi korunur)."""
     _clear_readonly()
     try:
-        with open(HOSTS_PATH, "w", encoding="utf-8", errors="ignore", newline="") as f:
+        # Dosya normalde vardir; yoksa (cok nadir) 'w' ile olustur — kaybedilecek
+        # icerik olmadigi icin bu durumda truncation riski de yoktur.
+        mode = "r+" if os.path.exists(HOSTS_PATH) else "w"
+        # errors="surrogateescape": _read_hosts ile SIMETRIK — surrogate'e eslenen
+        # gecersiz 3. taraf byte'lar burada tam orijinal byte olarak geri yazilir.
+        with open(HOSTS_PATH, mode, encoding="utf-8", errors="surrogateescape", newline="") as f:
+            f.seek(0)
             f.write(content)
-        LAST_HOSTS_ERROR = ""
-        return True
-    except PermissionError:
-        # Bir kez daha salt-okunuru kaldirip tekrar dene.
-        _clear_readonly()
-        try:
-            with open(HOSTS_PATH, "w", encoding="utf-8", errors="ignore", newline="") as f:
-                f.write(content)
-            LAST_HOSTS_ERROR = ""
-            return True
-        except Exception as e:
-            LAST_HOSTS_ERROR = f"{type(e).__name__}: {e}"
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+            f.truncate()   # yeni icerik eskisinden kisaysa artan kuyrugu at
+        return True, "", None, False
+    except (PermissionError, OSError) as e:
+        winerr = getattr(e, "winerror", None)
+        err_no = getattr(e, "errno", None)
+        text = f"{type(e).__name__}: errno={err_no} winerror={winerr}: {e}"
+        return False, text, winerr, _is_transient_write_error(winerr, err_no)
+
+
+def _write_with_retry(compute: Callable[[], Optional[str]], backoffs) -> bool:
+    """compute() her cagrildiginda hosts'u YENIDEN okuyup yazilacak tam icerigi
+    (str) ya da None (okunamadi) dondurur. Gecici gorunumlu yazma hatalarinda
+    sinirli sayida, artan backoff ile yeniden dener; SONSUZ beklemez. Her denemede
+    diski yeniden okudugu icin, denemeler arasinda baska bir surecin yaptigi
+    hosts degisiklikleri EZILMEZ."""
+    global LAST_HOSTS_ERROR, LAST_HOSTS_WINERROR
+    total = len(backoffs) + 1
+    for i in range(total):
+        content = compute()
+        if content is None:
+            LAST_HOSTS_ERROR = "hosts okunamadi"
+            LAST_HOSTS_WINERROR = None
             return False
-    except Exception as e:
-        LAST_HOSTS_ERROR = f"{type(e).__name__}: {e}"
-        return False
+        ok, err, winerr, transient = _write_hosts_once(content)
+        if ok:
+            LAST_HOSTS_ERROR = ""
+            LAST_HOSTS_WINERROR = None
+            return True
+        LAST_HOSTS_ERROR = err
+        LAST_HOSTS_WINERROR = winerr
+        if not transient or i == total - 1:
+            return False
+        time.sleep(backoffs[i])
+    return False
 
 
 def _strip_block(content: str) -> str:
@@ -401,30 +485,48 @@ def _strip_block(content: str) -> str:
     return "".join(out)
 
 
-def add_hosts_redirect() -> bool:
+def _compute_add_content() -> Optional[str]:
+    """hosts'u YENIDEN okuyup DPort blogu eklenmis TAM icerigi hesaplar (yalniz
+    kendi/eski blogumuzu temizler; 3. taraf tum satirlar ve satir sonlari korunur).
+    None: hosts okunamadi."""
     content = _read_hosts()
     if content is None:
-        return False
+        return None
     content = _strip_block(content)
     if content and not content.endswith("\n"):
         content += "\n"
     block = [HOSTS_MARK_BEGIN]
     block += [f"127.0.0.1 {h}" for h in BLOCKED_HOSTS]
     block.append(HOSTS_MARK_END)
-    content += "\n".join(block) + "\n"
-    return _write_hosts(content)
+    return content + "\n".join(block) + "\n"
+
+
+def _compute_remove_content() -> Optional[str]:
+    """hosts'u YENIDEN okuyup yalnizca DPort/eski blogu cikarilmis icerigi
+    hesaplar. None: okunamadi."""
+    content = _read_hosts()
+    if content is None:
+        return None
+    return _strip_block(content)
+
+
+def add_hosts_redirect() -> bool:
+    with _HOSTS_LOCK:
+        return _write_with_retry(_compute_add_content, _ADD_BACKOFFS)
 
 
 def remove_hosts_redirect() -> bool:
-    content = _read_hosts()
-    if content is None:
-        return False
-    begins = (HOSTS_MARK_BEGIN,) + tuple(b for b, _ in _LEGACY_MARKS)
-    if not any(b in content for b in begins):
-        return True
-    return _write_hosts(_strip_block(content))
+    with _HOSTS_LOCK:
+        content = _read_hosts()
+        if content is None:
+            return False
+        begins = (HOSTS_MARK_BEGIN,) + tuple(b for b, _ in _LEGACY_MARKS)
+        if not any(b in content for b in begins):
+            return True   # temizlenecek blok yok
+        return _write_with_retry(_compute_remove_content, _REMOVE_BACKOFFS)
 
 
 def is_hosts_redirect_active() -> bool:
-    content = _read_hosts()
+    with _HOSTS_LOCK:
+        content = _read_hosts()
     return bool(content and HOSTS_MARK_BEGIN in content)

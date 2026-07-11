@@ -36,6 +36,7 @@ from core.discord_unblock import (
     is_hosts_redirect_active,
     doh_resolve,
     last_hosts_error,
+    last_hosts_winerror,
 )
 from core.failsafe import install_logon_failsafe, failsafe_installed
 from core.log_manager import LogManager
@@ -1004,10 +1005,18 @@ class DPortApp(ctk.CTk):
                 return False
             if not add_hosts_redirect():
                 err = last_hosts_error()
+                winerr = last_hosts_winerror()
                 self.log_mgr.write(
                     f"UNBLOCK | hosts yazilamadi | {err or 'yonetici izni veya antivirus (HostsFileHijack) engeli'}")
                 self._unblocker.stop()  # role acik kalmasin
-                self._st(L["st_fail_admin"], RED)
+                # Yalniz GERCEK yetki reddinde (winerror=5) VE yonetici DEGILSEK
+                # "yonetici gerekli" de. Aksi halde (paylasim ihlali/gecici kilit,
+                # ya da zaten yoneticiyken access-denied = AV/oyun anti-cheat)
+                # sakin "gecici mesgul, tekrar dene" mesaji goster.
+                if winerr == 5 and not self._is_admin():
+                    self._st(L["st_fail_admin"], RED)
+                else:
+                    self._st(L["st_fail_hosts_locked"], RED)
                 return False
             self._flushdns()
             self._ensure_failsafe()
