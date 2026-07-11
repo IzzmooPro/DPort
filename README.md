@@ -99,6 +99,16 @@ Python kuruluysa, kurulum yapmadan kaynaktan denemek için:
 scripts\Calistir.bat
 ```
 
+## ⚖️ Sorumluluk Reddi
+
+DPort; yalnızca eğitim, araştırma ve kişisel kullanım amacıyla geliştirilmiş açık kaynaklı bir projedir. Ticari bir ürün olarak sunulmamaktadır.
+
+- Yazılımın kullanımından doğabilecek doğrudan ya da dolaylı hiçbir zarardan geliştirici sorumlu tutulamaz; program **olduğu gibi** sağlanır.
+- Programı kullanıp kullanmamak tamamen kullanıcının kendi tercihi ve sorumluluğundadır.
+- Yürürlükteki yasa ve düzenlemelere uygun kullanım kullanıcıya aittir.
+- Örnek olarak Discord'un seçilmesinin nedeni, DPI ile erişimi kısıtlanan bir uygulama üzerinde yöntemin denenebilmesi gereğidir; belirli bir hizmeti hedef alma amacı taşımaz.
+- Kaynak kodun GitHub üzerinde paylaşılması, bilgi paylaşımı ve yazılım geliştirme öğrenimi amacına yöneliktir.
+
 ## 👤 Geliştirici
 
 **IzzmooPro** · 📧 IzzmooPro@gmail.com
@@ -209,6 +219,16 @@ If Python is installed, try it from source without installing:
 ```bat
 scripts\Calistir.bat
 ```
+
+## ⚖️ Disclaimer
+
+DPort is an open-source project built solely for educational, research, and personal use. It is not offered as a commercial product.
+
+- The developer cannot be held liable for any direct or indirect damage arising from the use of this software; it is provided **as is**.
+- Whether or not to use the program is entirely the user's own choice and responsibility.
+- Using it in accordance with applicable laws and regulations is the user's responsibility.
+- Discord was chosen as an example because the method needs a service whose access is restricted via DPI to be tested against; it does not aim to target any specific service.
+- Sharing the source code on GitHub serves the purpose of knowledge sharing and learning software development.
 
 ## 👤 Developer
 
