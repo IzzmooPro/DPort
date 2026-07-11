@@ -56,6 +56,10 @@ TR = {
     "st_not_found":     "Discord bulunamadı",
     "st_update_ok":     "Güncelleme kontrolü tamamlandı ✓",
     "st_update_fail":   "Güncelleme başarısız (engel aşılamadı)",
+    "st_discord_restarting": "Discord yeni yol için yeniden başlatılıyor...",
+    "st_restart_close_failed": "Discord kapatılamadı, mevcut durumu korundu",
+    "st_restart_close_timeout": "Discord zamanında kapanmadı, yeniden başlatma iptal edildi",
+    "st_restart_launch_failed": "Discord kapatıldı ama yeniden başlatılamadı",
 
     # Normale dön onayı
     "dlg_restore_t":    "Normale Dön",
@@ -178,6 +182,10 @@ EN = {
     "st_not_found":     "Discord not found",
     "st_update_ok":     "Update check complete ✓",
     "st_update_fail":   "Update failed (block not bypassed)",
+    "st_discord_restarting": "Restarting Discord for the new path...",
+    "st_restart_close_failed": "Couldn't close Discord, kept its current state",
+    "st_restart_close_timeout": "Discord didn't close in time, restart cancelled",
+    "st_restart_launch_failed": "Discord was closed but could not be restarted",
 
     "dlg_restore_t":    "Restore Normal",
     "dlg_restore_msg":  "Close the bypass path and set system DNS back to automatic (DHCP)?\n\nNote: If Discord is open its connection may drop.",

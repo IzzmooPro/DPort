@@ -117,7 +117,12 @@ def get_discord_process_info() -> Dict:
         return {"running": False, "count": 0, "has_window": False, "paths": []}
 
 
-def launch_discord(use_updater: bool = True) -> Tuple[bool, str]:
+def launch_discord(use_updater: bool = True, ensure_closed: bool = True) -> Tuple[bool, str]:
+    """ensure_closed=True (varsayilan, eski guvenli davranis): Update.exe
+    yoluna girmeden once kendi close_discord_processes() + 1 sn bekleme
+    adimini calistirir. Cagiran taraf sureclerin KAPANDIGINI ZATEN dogrulamis
+    kapatilmasi zaten (ornegin _wait_discord_closed ile) ise ensure_closed=False
+    verip bu ikinci/gereksiz kapatma adimini atlayabilir."""
     if not use_updater:
         ok, msg = launch_discord_direct()
         if ok:
@@ -126,8 +131,9 @@ def launch_discord(use_updater: bool = True) -> Tuple[bool, str]:
     update_exe = find_discord_update()
     if update_exe:
         try:
-            close_discord_processes()
-            time.sleep(1)
+            if ensure_closed:
+                close_discord_processes()
+                time.sleep(1)
             subprocess.Popen(
                 [update_exe, "--processStart", "Discord.exe"],
                 cwd=os.path.dirname(update_exe),
@@ -261,23 +267,29 @@ def _log_line_epoch(line: str) -> Optional[float]:
     return time.mktime(dt.timetuple()) + (dt.microsecond / 1_000_000)
 
 
-def close_discord_processes():
+def close_discord_processes() -> Tuple[bool, str]:
+    """Yalnizca _discord_roots() (LocalAppData\\Discord|DiscordPTB|DiscordCanary)
+    altindaki Discord.exe/Update.exe sureclerini kapatir; eslesme surecin gercek
+    .Path'inin bu koklerden biriyle basladigina bakar. Sistemdeki BASKA bir
+    uygulamaya ait Update.exe (or. farkli bir Squirrel tabanli app) asla hedef
+    alinmaz. Donus: (komut hatasiz calisti mi, kac surece sinyal gonderildigi/ozet)."""
     roots = [root for root in _discord_roots() if os.path.isdir(root)]
     if not roots:
-        return
+        return True, "Discord kurulum klasoru bulunamadi, kapatilacak surec yok."
 
     ps_roots = ", ".join("'" + root.replace("'", "''") + "'" for root in roots)
     command = (
-        f"$roots=@({ps_roots}); "
+        f"$roots=@({ps_roots}); $hit=0; "
         "Get-Process -Name Discord,Update -ErrorAction SilentlyContinue | ForEach-Object { "
         "$path=$_.Path; if (-not $path) { return }; "
         "foreach ($root in $roots) { "
         "if ($path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { "
-        "Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue; break "
-        "} } }"
+        "Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue; $hit++; break "
+        "} } }; "
+        "Write-Output $hit"
     )
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", command],
             capture_output=True,
             text=True,
@@ -286,5 +298,9 @@ def close_discord_processes():
             timeout=8,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-    except Exception:
-        pass
+        if result.returncode != 0:
+            return False, f"PowerShell hatasi: {(result.stderr or result.stdout).strip()}"
+        hit = (result.stdout or "0").strip() or "0"
+        return True, f"{hit} Discord/Update surecine kapatma sinyali gonderildi."
+    except Exception as e:
+        return False, str(e)

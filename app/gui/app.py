@@ -26,6 +26,8 @@ from core.discord_manager import (
     get_discord_update_status,
     launch_discord,
     installed_discord_version,
+    is_discord_running,
+    close_discord_processes,
 )
 from core.discord_unblock import (
     DiscordUnblocker,
@@ -824,6 +826,11 @@ class DPortApp(ctk.CTk):
 
     def _open_discord_w(self):
         try:
+            # 0) Discord'un DPort'tan ONCE calisip calismadigini, herhangi bir
+            # DPort degisikliginden once kaydet (sonradan olcersek DPort'un
+            # kendi surec baslatmasi/kapatmasi olcumu bozar).
+            was_running = is_discord_running()
+
             # 1) Sistem DNS'ini 1.1.1.1 yap — ama once ORIJINALI yedekle
             self._st(L["st_setting_dns"], YELL)
             adapters = get_active_adapters()
@@ -840,8 +847,45 @@ class DPortApp(ctk.CTk):
             self._st(L["st_path_prep"], YELL)
             path_ok = self._enable_discord_unblock()
 
-            # 3) Guncelle + ac
-            use_updater = self._discord_should_use_updater() and path_ok
+            if not path_ok:
+                # Yol hazirlanamadi: calisan (varsa) Discord'a HIC dokunma.
+                # Relay beklenmedik bir istisnayi hosts'a yazdiktan/roleyi
+                # baslattiktan SONRA almis olabilir (_enable_discord_unblock
+                # normalde kendi hatalarinda zaten temizler, ama garanti
+                # olsun diye burada da idempotent temizlik yapilir); once
+                # role/isaretli hosts blogunu sok, sonra DNS'i geri al ve
+                # flush et.
+                self.log_mgr.write(
+                    "DISCORD | yol hazirlanamadi, Discord'a dokunulmadi, DPort degisiklikleri geri aliniyor"
+                )
+                self._disable_discord_unblock()
+                self._restore_dns()
+                self._flushdns()
+                return
+
+            if was_running:
+                # 3) Discord DPort'tan once zaten acikti: yeni hazirlanan
+                # hosts/role yolunu kullanabilmesi icin TEK SEFERLIK kapat +
+                # Update.exe ile yeniden baslat. 6 saatlik updater onbellegi
+                # bu senaryoda kasitli olarak yok sayilir (amac surum degil,
+                # surecin yeni yola baglanmasidir). started_at, yeniden
+                # baslatma/launch'tan ONCE alinir; aksi halde updater log
+                # filtresi (since_epoch) ilk satirlari kacirabilir.
+                started_at = time.time()
+                ok, msg = self._restart_discord_for_new_path()
+                if not ok:
+                    self.log_mgr.write(f"DISCORD | yeniden baslatma basarisiz | {msg}")
+                    self._st(msg, RED)
+                    return
+                self.log_mgr.write(f"DISCORD | yeniden baslatildi (yol degisti) | {msg}")
+                self._st(L["st_update_started"], GREEN)
+                threading.Thread(
+                    target=self._discord_update_result_w, args=(started_at,), daemon=True
+                ).start()
+                return
+
+            # 4) Discord onceden calismiyordu: mevcut davranis aynen korunur.
+            use_updater = self._discord_should_use_updater()
             if use_updater:
                 self._st(L["st_updating"], YELL)
             else:
@@ -866,6 +910,56 @@ class DPortApp(ctk.CTk):
             self._busy = False
             self.after(0, lambda: self.btn_open.configure(state="normal", text=L["btn_open"]))
             self.after(0, self._refresh_status_async)
+
+    def _restart_discord_for_new_path(self):
+        """Discord DPort'tan once zaten acikken cagrilir: az once hazirlanan
+        hosts/role yolunu kullanabilmesi icin surecini kapatip Update.exe ile
+        yeniden baslatir. Yalniz close_discord_processes'in hedefledigi (kendi
+        kurulum kokundeki) Discord/Update sureclerine dokunur; sistemdeki
+        baska bir Update.exe'ye asla dokunmaz (bkz. discord_manager.py).
+
+        Basarisiz olursa DPort'un rolü/hosts yolu BOZULMAZ/geri ALINMAZ: yol
+        kendi icinde tutarlidir (path_ok=True, hazirlik tamamlandi), sorun
+        yalniz Discord surecinin bu yola gececek sekilde yeniden baslatila-
+        mamasidir. Yolu geri almak burada hicbir seyi duzeltmez (surec zaten
+        kapatilmis/kapatilamamis olabilir) ve kullanicinin tekrar 'Discord'u
+        Ac'a basmasini veya 'Normale Don' ile bilincli sekilde vazgecmesini
+        daha guvenli kilar."""
+        self._st(L["st_discord_restarting"], YELL)
+
+        ok, msg = close_discord_processes()
+        self.log_mgr.write(f"DISCORD | kapatma sinyali | {'OK' if ok else 'HATA'} | {msg}")
+        if not ok:
+            return False, L["st_restart_close_failed"]
+
+        if not self._wait_discord_closed(timeout=6.0):
+            # Surec ilk sinyalde kapanmamis olabilir: tek bir ek deneme.
+            ok2, msg2 = close_discord_processes()
+            self.log_mgr.write(
+                f"DISCORD | ikinci kapatma denemesi | {'OK' if ok2 else 'HATA'} | {msg2}"
+            )
+            if not ok2 or not self._wait_discord_closed(timeout=4.0):
+                return False, L["st_restart_close_timeout"]
+
+        self._flushdns()
+        # Surecin kapandigi yukarida (_wait_discord_closed) zaten dogrulandi;
+        # launch_discord'un kendi ic close_discord_processes()+sleep(1)
+        # adimini (ikinci/gereksiz kapatma) tekrarlamasina gerek yok.
+        ok, msg = launch_discord(use_updater=True, ensure_closed=False)
+        if not ok:
+            return False, L["st_restart_launch_failed"]
+        return True, msg
+
+    def _wait_discord_closed(self, timeout: float) -> bool:
+        """Discord surecinin gercekten kapandigini sinirli sure icinde
+        dogrular (sonsuz bekleme yok); uygulama kapanirsa beklemeyi hemen
+        birakir."""
+        deadline = time.time() + timeout
+        while self._alive and time.time() < deadline:
+            if not is_discord_running():
+                return True
+            time.sleep(0.3)
+        return not is_discord_running()
 
     # ─────────────────────────── Normale Don ───────────────────────────
     def _restore_normal(self):
