@@ -194,6 +194,8 @@ class DPortApp(ctk.CTk):
             enabled=self.cfg.get("log_enabled", True),
         )
         self._busy = False
+        self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
+        self._tray = None           # aktif tepsi ikonu (cift ikon onlemek icin)
         self._panel = None          # ayni anda tek alt pencere (ayarlar/log/yardim/hakkinda)
         self._active_since = None    # yol kesintisiz ne zamandir aktif (aktif sure)
         self._ping_ms = None
@@ -329,8 +331,20 @@ class DPortApp(ctk.CTk):
 
         threading.Thread(target=listen, daemon=True).start()
 
+    def _stop_tray(self):
+        """Aktif tepsi ikonu varsa durdurur ve referansi temizler.
+        Cift tepsi ikonunu onler (IPC/ikinci-ornek ile geri gelince de cagrilir)."""
+        tray = getattr(self, "_tray", None)
+        if tray is not None:
+            try:
+                tray.stop()
+            except Exception:
+                pass
+            self._tray = None
+
     def _show_window(self):
         """Tepside/gizliyse pencereyi geri getirir ve one alir."""
+        self._stop_tray()   # geri gelince tepsi ikonu kalmasin
         try:
             self.deiconify()
             self.lift()
@@ -698,8 +712,13 @@ class DPortApp(ctk.CTk):
                 self._ping_last = time.time()
             ping_txt = f"{self._ping_ms} ms" if self._ping_ms else L["val_measuring"]
 
-        self.after(0, lambda: self._apply_status(
-            active, ver_txt, dns_txt, ping_txt, ver, self._ping_ms if active else None))
+        if not self._alive:   # kapandiysa panoyu guncelleme
+            return
+        try:
+            self.after(0, lambda: self._apply_status(
+                active, ver_txt, dns_txt, ping_txt, ver, self._ping_ms if active else None))
+        except Exception:
+            pass
 
     def _apply_status(self, active, ver_txt, dns_txt, ping_txt, ver=None, ping_ms=None):
         if not self.dash:
@@ -914,8 +933,10 @@ class DPortApp(ctk.CTk):
         last_error = None
         last_message = None
 
-        while time.time() < deadline:
+        while self._alive and time.time() < deadline:
             time.sleep(5)
+            if not self._alive:   # kapandiysa erken cik (config/Tk'ye dokunma)
+                return
             status, msg = get_discord_update_status(max_age_seconds=120, since_epoch=started_at)
             if status == "ok":
                 self.log_mgr.console(f"Updater sonucu: {msg}", level="INFO")
@@ -939,37 +960,30 @@ class DPortApp(ctk.CTk):
     # ─────────────────────────── DNS yedek/geri-yukle ───────────────────────────
     def _backup_dns(self, adapters):
         """DNS'i 1.1.1.1 yapmadan ONCE orijinal ayari (bir kez) yedekle.
-        Onceki oturumdan (cokme) zaten bizim degerimiz kalmissa onu ORIJINAL
-        sanmayiz — mevcut yedegi ezmeyiz; gercek orijinal korunur."""
+        Cokme-kurtarma: yedek zaten varsa uzerine YAZMAYIZ (gercek orijinal korunur),
+        boylece 'bizim degerimizi orijinal sanma' sorunu olmaz. Bu yuzden 1.1.1.1'i
+        normalde kendi tercihi olarak kullanan kullanicinin ayari da dogru yedeklenir."""
         if self.cfg.get("dns_backup"):
             return
         backup = {}
         for a in adapters:
             try:
-                snap = get_dns(a["name"])
+                backup[a["name"]] = get_dns(a["name"])
             except Exception:
                 continue
-            # bizim enjekte ettigimiz deger orijinal degildir; yedekleme
-            if snap.get("ipv4", {}).get("primary") in DNS_V4:
-                continue
-            backup[a["name"]] = snap
         if backup:
             self.cfg.set("dns_backup", backup)
             self.log_mgr.write(f"DNS | orijinal ayar yedeklendi ({len(backup)} adaptor)")
 
     def _restore_dns(self):
-        """Sistem DNS'ini yedeklenmis ORIJINAL ayara dondurur (statik ise statik,
-        DHCP ise DHCP). Yedek yoksa DHCP'ye doner."""
+        """YALNIZCA bizim degistirdigimiz (yedekteki) adaptorleri orijinal ayarina
+        dondurur — statik ise statik, DHCP ise DHCP. Dokunmadigimiz adaptorlere
+        (yedekte olmayan) HIC karisilmaz; kullanicinin manuel DNS'i bozulmaz."""
         backup = self.cfg.get("dns_backup") or {}
         try:
-            for a in get_active_adapters():
-                snap = backup.get(a["name"])
-                if snap:
-                    ok, msg = restore_dns(a["name"], snap)
-                    self.log_mgr.write(f"DNS geri | {a['name']} | {'OK' if ok else msg}")
-                else:
-                    ok, msg = reset_to_dhcp(a["name"])
-                    self.log_mgr.write(f"DHCP | {a['name']} | {'OK' if ok else msg}")
+            for name, snap in backup.items():
+                ok, msg = restore_dns(name, snap)
+                self.log_mgr.write(f"DNS geri | {name} | {'OK' if ok else msg}")
         except Exception as e:
             self.log_mgr.write(f"DNS geri | hata | {e}")
         self.cfg.set("dns_backup", None)
@@ -988,7 +1002,7 @@ class DPortApp(ctk.CTk):
     def _watchdog_loop(self):
         """Role beklenmedik sekilde olur de hosts yonlendirmesi kalirsa (Discord'u
         bozacak durum), aninda temizle. Program calistigi surece gorev yapar."""
-        while True:
+        while self._alive:
             time.sleep(2)
             try:
                 if is_hosts_redirect_active() and not self._unblocker.is_active():
@@ -1014,12 +1028,17 @@ class DPortApp(ctk.CTk):
     def _st(self, txt: str, col: str = SUB):
         if hasattr(self, "log_mgr"):
             self.log_mgr.console(txt, level="STATUS")
+        if not getattr(self, "_alive", True):   # kapandiysa Tk'ye dokunma
+            return
 
         def _apply():
             self.status_lbl.configure(text=txt, text_color=col)
             if hasattr(self, "status_dot"):
                 self.status_dot.configure(text_color=col)
-        self.after(0, _apply)
+        try:
+            self.after(0, _apply)
+        except Exception:
+            pass
 
     @staticmethod
     def _is_admin():
@@ -1144,10 +1163,13 @@ class DPortApp(ctk.CTk):
         self.dash = {}
         self.title(L["title"])
         self._build()
+        self._fit_height()   # dil degisince metin uzarsa pencere yeniden sigsin
 
     # ─────────────────────────── Kapanis / tepsi ───────────────────────────
     def destroy(self):
-        # Tamamen kapanirken yonlendirmeyi geri al, roleyi durdur, IPC'yi kapat.
+        # Tamamen kapanirken yonlendirmeyi geri al, roleyi durdur, IPC'yi + tepsiyi kapat.
+        self._alive = False   # arka plan thread'leri artik Tk'ye dokunmasin
+        self._stop_tray()
         try:
             if getattr(self, "_ipc_srv", None):
                 self._ipc_srv.close()
@@ -1178,6 +1200,7 @@ class DPortApp(ctk.CTk):
         try:
             import pystray
             from PIL import Image, ImageDraw
+            self._stop_tray()   # varsa eski ikonu durdur (cift ikon olmasin)
             self.withdraw()
             icon_path = resource_path("assets", "icon.ico")
             if os.path.exists(icon_path):
@@ -1188,10 +1211,12 @@ class DPortApp(ctk.CTk):
 
             def on_open(icon, _):
                 icon.stop()
+                self._tray = None
                 self.after(0, self._show_window)
 
             def on_quit(icon, _):
                 icon.stop()
+                self._tray = None
                 self.after(0, self.destroy)
 
             menu = pystray.Menu(
@@ -1199,7 +1224,8 @@ class DPortApp(ctk.CTk):
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Exit / Cikis", on_quit),
             )
-            pystray.Icon("dport", img, L["title"], menu).run_detached()
+            self._tray = pystray.Icon("dport", img, L["title"], menu)
+            self._tray.run_detached()
         except Exception:
             self.destroy()
 
