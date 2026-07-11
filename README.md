@@ -63,7 +63,7 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 - **Açık kaynak** — kodun tamamı bu depoda duruyor; hiçbir satırı gizli değil, istediğin zaman kendin okuyabilirsin.
 - **Yalnızca GitHub Releases üzerinden dağıtılır** — tek resmi indirme adresi her zaman [Releases sayfası](https://github.com/IzzmooPro/DPort/releases/latest). Başka bir siteden/indirici programdan gelen bir DPort dosyasına güvenme.
-- **Arkasında veri toplayan bir sunucu yok** — analitik, telemetri veya "eve telefon etme" (phone-home) mekanizması **yok**. Kodda dışarıyla konuşan yerler sınırlı ve hepsi işlevle ilgili — tam listesi:
+- **Arkasında veri toplayan bir sunucu yok** — analitik, telemetri veya kullanıcıdan habersiz arka planda sunucuya veri gönderen bir mekanizma **yok**. Kodda dışarıyla konuşan yerler sınırlı ve hepsi işlevle ilgili — tam listesi:
 
   | Adres | Ne için, ne zaman |
   |:--|:--|
