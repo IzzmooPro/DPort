@@ -54,6 +54,8 @@ from core.updater import UpdateError, check_latest_release, download_update
 
 # ── Tema — modern derin dark + Discord blurple aksani ───────────────────────
 BG        = "#0f1016"   # derin arka plan
+HEADER_BG = "#161826"   # baslik bandi degradesinin en koyu ucu (canvas bg — DPI'da
+                        # 360 sonrasi bosluk beyaz yerine bu koyu tonda kalir)
 CARD      = "#181a21"   # yuzey (kart)
 CARD2     = "#20232c"   # yukseltilmis yuzey
 BLURPLE   = "#5865f2"   # ana aksan
@@ -571,66 +573,98 @@ class DPortApp(ctk.CTk):
     def _build_header(self):
         H = 74
         try:
+            # bg=HEADER_BG: ham CTkCanvas'in varsayilan (acik) arka plani yerine
+            # ILK KAREDEN koyu. Yuksek DPI'da (window scaling) canvas gercek
+            # genislige (or. 360*1.25=450) esnedigi icin, icerik cizilmeden onceki
+            # an bile beyaz bir dikdortgen gorunmez.
             canvas = ctk.CTkCanvas(self, width=self.W, height=H,
-                                   highlightthickness=0, bd=0)
+                                   highlightthickness=0, bd=0, bg=HEADER_BG)
             canvas.pack(fill="x")
-            # Koyu, indigo-tonlu ince degrade — renkli uygulama ikonu one ciksin.
-            self._draw_gradient(canvas, self.W, H, ["#161826", "#1d2138", "#252a4c"])
-
-            # Gercek uygulama ikonu (icon.ico). Yuklenemezse cizilen logoya dus.
-            text_x = 60
-            loaded = False
-            ico = resource_path("assets", "icon.ico")
-            if os.path.exists(ico):
-                try:
-                    from PIL import Image, ImageTk
-                    im = Image.open(ico).convert("RGBA").resize((44, 44), Image.LANCZOS)
-                    self._logo_img = ImageTk.PhotoImage(im)
-                    canvas.create_image(16, H // 2, anchor="w", image=self._logo_img)
-                    text_x = 16 + 44 + 12
-                    loaded = True
-                except Exception:
-                    pass
-            if not loaded:
-                self._draw_logo(canvas, 18, H // 2, 19)
-
-            canvas.create_text(text_x, H // 2 - 8, anchor="w", text=L["title"],
-                               font=(FONT, 18, "bold"), fill=WHITE)
-            canvas.create_text(text_x, H // 2 + 12, anchor="w", text=f"v{self.VERSION}",
-                               font=(FONT, 9, "bold"), fill=BLURPLE_L)
-
-            # Yonetici durumu — koyu chip + cizilmis kilit ikonu + ortalanmis metin.
-            adm = self._is_admin()
-            pill_txt = L["admin_yes"] if adm else L["admin_no"]
-            col = GREEN if adm else RED
-            cy = H // 2
-            self._pill_img = None
-            try:
-                self._pill_img = self._lock_photo(col, 12)
-            except Exception:
-                pass
-            iw = 12 if self._pill_img else 0
-            pad_l, gap, pad_r = 10, 5, 12
-            tw = len(pill_txt) * 6 + 2                 # metin genisligi (yaklasik)
-            pw = pad_l + iw + gap + tw + pad_r
-            x2 = self.W - 14
-            x1 = x2 - pw
-            self._round_rect(canvas, x1, cy - 12, x2, cy + 12, 11,
-                             fill="#12141d", outline=col, width=1)
-            if self._pill_img:                        # kilit — dikey ortali
-                canvas.create_image(x1 + pad_l + iw / 2, cy, image=self._pill_img)
-            canvas.create_text(x1 + pad_l + iw + gap, cy, anchor="w",
-                               text=pill_txt, font=(FONT, 9, "bold"), fill=col)
-
-            # Alt aksan cizgisi — ince blurple, govdeden ayirir.
-            canvas.create_rectangle(0, H - 2, self.W, H, fill=BLURPLE, outline="")
             self._header_canvas = canvas
+            self._header_h = H
+            self._header_w = 0                 # son cizilen genislik (tekrar cizimi sinirlar)
+            self._prepare_header_images(H)     # logo + pill goruntusunu BIR kez uret
+            # Ilk cizim mantiksal genislige (self.W) yapilir — %100 gorunum birebir
+            # ayni kalir. Gercek (DPI-olcekli) genislik <Configure> ile gelince tam
+            # genislige yeniden cizilir; boylece degrade/alt-cizgi/pill sag kenara kadar uzar.
+            self._redraw_header(self.W)
+            canvas.bind("<Configure>", self._on_header_configure)
         except Exception:
             # Guvenli geri donus: duz renk baslik
             hdr = ctk.CTkFrame(self, fg_color=CARD, height=H)
             hdr.pack(fill="x")
             ctk.CTkLabel(hdr, text=f"  {L['title']} v{self.VERSION}", font=_f(16, "bold"),
                          text_color=WHITE).pack(side="left", padx=18, pady=20)
+
+    def _prepare_header_images(self, H):
+        """Logo (icon.ico) ve yonetici pill goruntusunu BIR kez uretir; her
+        Configure yeniden ciziminde yeniden uretilmez (birikme/yuk olmaz)."""
+        self._logo_img = None
+        self._pill_img = None
+        ico = resource_path("assets", "icon.ico")
+        if os.path.exists(ico):
+            try:
+                from PIL import Image, ImageTk
+                im = Image.open(ico).convert("RGBA").resize((44, 44), Image.LANCZOS)
+                self._logo_img = ImageTk.PhotoImage(im)
+            except Exception:
+                self._logo_img = None
+        try:
+            self._pill_img = self._lock_photo(GREEN if self._is_admin() else RED, 12)
+        except Exception:
+            self._pill_img = None
+
+    def _on_header_configure(self, event):
+        """Canvas gercek genisligi degistiginde (DPI olcegi / ilk yerlesim) tam
+        genislige yeniden ciz. Ayni genislikte tekrar cizmez (olay dongusu/birikme yok)."""
+        w = event.width
+        if w <= 1 or w == self._header_w:
+            return
+        self._redraw_header(w)
+
+    def _redraw_header(self, width):
+        """Baslik bandini VERILEN GERCEK genislige gore bir kez cizer. delete('all')
+        ile onceki ogeler silinir (birikme olmaz); degrade ve alt cizgi tam genisligi
+        kaplar, yonetici pill sag kenara hizalanir."""
+        c = self._header_canvas
+        H = self._header_h
+        self._header_w = width
+        c.delete("all")
+        # Koyu, indigo-tonlu ince degrade — tam genislik.
+        self._draw_gradient(c, width, H, ["#161826", "#1d2138", "#252a4c"])
+
+        # Sol: logo + baslik + surum
+        text_x = 60
+        if self._logo_img is not None:
+            c.create_image(16, H // 2, anchor="w", image=self._logo_img)
+            text_x = 16 + 44 + 12
+        else:
+            self._draw_logo(c, 18, H // 2, 19)
+        c.create_text(text_x, H // 2 - 8, anchor="w", text=L["title"],
+                      font=(FONT, 18, "bold"), fill=WHITE)
+        c.create_text(text_x, H // 2 + 12, anchor="w", text=f"v{self.VERSION}",
+                      font=(FONT, 9, "bold"), fill=BLURPLE_L)
+
+        # Sag: yonetici pill — SAG kenara (gercek width) hizali.
+        adm = self._is_admin()
+        pill_txt = L["admin_yes"] if adm else L["admin_no"]
+        col = GREEN if adm else RED
+        cy = H // 2
+        iw = 12 if self._pill_img else 0
+        pad_l, gap, pad_r = 10, 5, 12
+        tw = len(pill_txt) * 6 + 2                 # metin genisligi (yaklasik)
+        pw = pad_l + iw + gap + tw + pad_r
+        x2 = width - 14
+        x1 = x2 - pw
+        self._round_rect(c, x1, cy - 12, x2, cy + 12, 11,
+                         fill="#12141d", outline=col, width=1)
+        if self._pill_img:                         # kilit — dikey ortali
+            c.create_image(x1 + pad_l + iw / 2, cy, image=self._pill_img)
+        c.create_text(x1 + pad_l + iw + gap, cy, anchor="w",
+                      text=pill_txt, font=(FONT, 9, "bold"), fill=col)
+
+        # Alt aksan cizgisi — ince blurple, tam genislik.
+        c.create_rectangle(0, H - 2, width, H, fill=BLURPLE, outline="")
 
     def _draw_logo(self, canvas, cx, cy, s):
         """Beyaz yuvarlak-kare rozet + blurple simsek (hizli baglanti)."""
