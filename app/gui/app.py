@@ -37,6 +37,7 @@ from core.discord_unblock import (
     doh_resolve,
     last_hosts_error,
     last_hosts_winerror,
+    last_hosts_retry_info,
 )
 from core.failsafe import install_logon_failsafe, failsafe_installed
 from core.log_manager import LogManager
@@ -1018,6 +1019,15 @@ class DPortApp(ctk.CTk):
                 else:
                     self._st(L["st_fail_hosts_locked"], RED)
                 return False
+            # Teshis: hosts yazma ilk denemede degil de retry icinde asildiysa,
+            # bunu YALNIZ log'a bir kez yaz (ilk-deneme basarida yazma). Dosya
+            # icerigi/kullanici verisi/surec adi loglanmaz — sadece deneme sayisi
+            # ve gecici hata kodlari.
+            attempts, r_errno, r_winerr = last_hosts_retry_info()
+            if attempts > 1:
+                self.log_mgr.write(
+                    f"UNBLOCK | hosts gecici kilidi {attempts}. denemede asildi | "
+                    f"errno={r_errno} winerror={r_winerr}")
             self._flushdns()
             self._ensure_failsafe()
             self.log_mgr.write("UNBLOCK | Baglanti yolu acildi (update+API+gateway+CDN)")

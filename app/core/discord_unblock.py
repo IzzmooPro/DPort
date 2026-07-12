@@ -349,6 +349,21 @@ def _read_hosts() -> Optional[str]:
 LAST_HOSTS_ERROR = ""
 LAST_HOSTS_WINERROR: Optional[int] = None
 
+# Son BASARILI hosts yazma operasyonunun retry teshisi (yalniz kayit amacli;
+# davranisi/akisi etkilemez). CAGIRAN THREAD'e OZEL tutulur (threading.local):
+# app, add_hosts_redirect'i cagirdigi AYNI thread'de kendi sonucunu okur; arada
+# baska bir thread'in yazmasi bu bilgiyi KARISTIRAMAZ (global paylasimli degil).
+#  attempts: kacinci denemede basarildi (1 = ilk deneme, retry yok; 0 = henuz basari yok)
+#  retry_errno / retry_winerror: basari ONCESI son gecici hatanin kodlari (retry yoksa None)
+_HOSTS_TLS = threading.local()
+
+
+def _reset_retry_info() -> None:
+    """Cagiran thread'in retry teshis bilgisini sifirlar (yeni operasyon veya no-op)."""
+    _HOSTS_TLS.attempts = 0
+    _HOSTS_TLS.retry_errno = None
+    _HOSTS_TLS.retry_winerror = None
+
 # hosts dosyasina yazma/okuma islemlerini (add/remove/aktiflik) TEK sirada tutar;
 # ayni anda iki thread'in (or. _open_discord_w ile watchdog) dosyayi ezmesini onler.
 _HOSTS_LOCK = threading.RLock()
@@ -382,6 +397,21 @@ def last_hosts_winerror() -> Optional[int]:
     return LAST_HOSTS_WINERROR
 
 
+def last_hosts_retry_info() -> Tuple[int, Optional[int], Optional[int]]:
+    """CAGIRAN THREAD'in son hosts yazma operasyonunun retry teshisi.
+    Donus: (attempts, errno, winerror).
+      attempts == 1 -> ilk denemede basari (retry YOK); errno/winerror None.
+      attempts  > 1 -> retry oldu; errno/winerror basari ONCESI son gecici hatayi yansitir.
+      attempts == 0 -> bu thread'de henuz basarili yazma olmadi (or. final failure / no-op).
+    Thread'e ozeldir (threading.local): baska thread'in es zamanli islemi bu degeri
+    etkilemez. Yalnizca kayit/teshis icindir; akisi veya donus davranisini etkilemez."""
+    return (
+        getattr(_HOSTS_TLS, "attempts", 0),
+        getattr(_HOSTS_TLS, "retry_errno", None),
+        getattr(_HOSTS_TLS, "retry_winerror", None),
+    )
+
+
 def _clear_readonly():
     """hosts dosyasi salt-okunur (ReadOnly) isaretliyse yazma bayragini acar.
     Bazi sistemlerde/AV mudahalesinde hosts ReadOnly kaliyor ve yazma engelleniyor."""
@@ -404,8 +434,8 @@ def _is_transient_write_error(winerr: Optional[int], err_no: Optional[int]) -> b
     return False
 
 
-def _write_hosts_once(content: str) -> Tuple[bool, str, Optional[int], bool]:
-    """hosts'a TEK yazma denemesi. Donus: (basari, hata_metni, winerror, gecici_mi).
+def _write_hosts_once(content: str) -> Tuple[bool, str, Optional[int], bool, Optional[int]]:
+    """hosts'a TEK yazma denemesi. Donus: (basari, hata_metni, winerror, gecici_mi, errno).
 
     Yerinde 'r+' yazimi kullanilir:
       - Dosya var olan handle uzerinden yazildigi icin ACL/owner DEGISMEZ
@@ -429,12 +459,12 @@ def _write_hosts_once(content: str) -> Tuple[bool, str, Optional[int], bool]:
             except OSError:
                 pass
             f.truncate()   # yeni icerik eskisinden kisaysa artan kuyrugu at
-        return True, "", None, False
+        return True, "", None, False, None
     except (PermissionError, OSError) as e:
         winerr = getattr(e, "winerror", None)
         err_no = getattr(e, "errno", None)
         text = f"{type(e).__name__}: errno={err_no} winerror={winerr}: {e}"
-        return False, text, winerr, _is_transient_write_error(winerr, err_no)
+        return False, text, winerr, _is_transient_write_error(winerr, err_no), err_no
 
 
 def _write_with_retry(compute: Callable[[], Optional[str]], backoffs) -> bool:
@@ -444,6 +474,8 @@ def _write_with_retry(compute: Callable[[], Optional[str]], backoffs) -> bool:
     diski yeniden okudugu icin, denemeler arasinda baska bir surecin yaptigi
     hosts degisiklikleri EZILMEZ."""
     global LAST_HOSTS_ERROR, LAST_HOSTS_WINERROR
+    # Yeni operasyon: bu THREAD'in retry teshis bilgisini sifirla (tasima yok).
+    _reset_retry_info()
     total = len(backoffs) + 1
     for i in range(total):
         content = compute()
@@ -451,13 +483,17 @@ def _write_with_retry(compute: Callable[[], Optional[str]], backoffs) -> bool:
             LAST_HOSTS_ERROR = "hosts okunamadi"
             LAST_HOSTS_WINERROR = None
             return False
-        ok, err, winerr, transient = _write_hosts_once(content)
+        ok, err, winerr, transient, err_no = _write_hosts_once(content)
         if ok:
             LAST_HOSTS_ERROR = ""
             LAST_HOSTS_WINERROR = None
+            _HOSTS_TLS.attempts = i + 1   # kacinci denemede basarildi (1 = ilk, retry yok)
             return True
         LAST_HOSTS_ERROR = err
         LAST_HOSTS_WINERROR = winerr
+        # Basari ONCESI son gecici hatanin kodlarini sakla (retry olursa gorunur).
+        _HOSTS_TLS.retry_errno = err_no
+        _HOSTS_TLS.retry_winerror = winerr
         if not transient or i == total - 1:
             return False
         time.sleep(backoffs[i])
@@ -522,7 +558,10 @@ def remove_hosts_redirect() -> bool:
             return False
         begins = (HOSTS_MARK_BEGIN,) + tuple(b for b, _ in _LEGACY_MARKS)
         if not any(b in content for b in begins):
-            return True   # temizlenecek blok yok
+            # Temizlenecek blok yok: yazma yapilmaz ama bu thread'in ONCEKI
+            # operasyondan kalan retry teshis bilgisi de bayat kalmasin — sifirla.
+            _reset_retry_info()
+            return True
         return _write_with_retry(_compute_remove_content, _REMOVE_BACKOFFS)
 
 
