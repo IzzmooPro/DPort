@@ -10,6 +10,14 @@
 
 </div>
 
+## 🖥️ Uygulama Görünümü
+
+<div align="center">
+
+<img src="screenshots/DPort-1.png" alt="DPort v3.2 uygulama arayüzü" width="360">
+
+</div>
+
 > 🧭 **Kısaca:** DPort'u aç → **Discord'u Aç** butonuna bas → gerisini program halletsin.
 > Ekstra VPN/WARP kurmana gerek yok; her şey uygulamanın kendi içinde olur.
 
