@@ -14,7 +14,8 @@
 
 <div align="center">
 
-<img src="screenshots/DPort-1.png" alt="DPort v3.2 uygulama arayüzü" width="360">
+<img src="screenshots/DPort-1.png" alt="DPort v3.2 bağlantı kapalı görünümü" width="360">
+<img src="screenshots/Dport-2.png" alt="DPort v3.2 bağlantı açık görünümü" width="360">
 
 </div>
 
