@@ -17,6 +17,10 @@
 <img src="screenshots/DPort-1.png" alt="DPort v3.2 bağlantı kapalı görünümü" width="360">
 <img src="screenshots/Dport-2.png" alt="DPort v3.2 bağlantı açık görünümü" width="360">
 
+<br><br>
+
+<img src="screenshots/Dport-3.png" alt="DPort v3.2 ayarlar paneli" width="720">
+
 </div>
 
 > 🧭 **Kısaca:** DPort'u aç → **Discord'u Aç** butonuna bas → gerisini program halletsin.
