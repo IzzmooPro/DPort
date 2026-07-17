@@ -14,7 +14,6 @@ import threading
 import subprocess
 import ctypes
 import customtkinter as ctk
-from tkinter import messagebox
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
@@ -52,30 +51,93 @@ from core.app_info import (
 )
 from core.updater import UpdateError, check_latest_release, download_update
 
-# ── Tema — modern derin dark + Discord blurple aksani ───────────────────────
-BG        = "#0f1016"   # derin arka plan
-HEADER_BG = "#161826"   # baslik bandi degradesinin en koyu ucu (canvas bg — DPI'da
-                        # 360 sonrasi bosluk beyaz yerine bu koyu tonda kalir)
-CARD      = "#181a21"   # yuzey (kart)
-CARD2     = "#20232c"   # yukseltilmis yuzey
-BLURPLE   = "#5865f2"   # ana aksan
-BLURPLE_H = "#4a54d4"   # hover
-BLURPLE_L = "#8b93f8"   # acik aksan (degrade ucu)
-INDIGO    = "#3a43b0"   # degrade koyu ucu
-GREEN     = "#3ba55d"
-GREEN_H   = "#2f8c4d"
-GREEN_BG  = "#16311f"   # yesil pill zemini
-RED       = "#ed4245"
-RED_BG    = "#31191b"
-YELL      = "#e5a935"
-YELL_BG   = "#322a16"
-TEXT      = "#f3f4f7"   # ana metin
-SUB       = "#c2c6d2"   # ikincil metin
-MUTED     = "#767b89"   # soluk / etiket
-BORDER    = "#242833"   # ince kenarlik
-WHITE     = "#ffffff"
+# ── Tema — TEK KOYU tema (scalar hex; light/dark tuple YOK) ──────────────────
+# DPort tek temali: her acilista ayni koyu tasarim. Windows temasi okunmaz/takip
+# edilmez. Katmanlar (zemin < kart < yukseltilmis < hover) notr ton farki + ince
+# border ile ayrisir; blurple YALNIZ ana eylem/odak icin kullanilir.
+BG            = "#0c111b"   # ana zemin (duz siyah degil)
+CARD          = "#121926"   # yuzey (kart)
+CARD2         = "#182233"   # yukseltilmis yuzey / switch zemini / araç çubuğu
+HOVER         = "#202c3f"   # hover katmani (ikincil yuzeyler)
+BORDER        = "#2a3648"   # ince kenarlik
+BORDER_STRONG = "#3a4960"   # belirgin kenarlik (odak karti)
+TEXT          = "#f3f6fb"   # ana metin
+SUB           = "#cbd5e1"   # ikincil metin
+MUTED         = "#94a3b8"   # soluk / etiket
+DISABLED      = "#697586"   # pasif (disabled) metin
+BLURPLE       = "#5865f2"   # ana aksan (yalniz ana eylem/odak)
+BLURPLE_H     = "#4752c4"   # hover
+BLURPLE_L     = "#aeb8ff"   # aksan / link metni
+GREEN         = "#3fb950"   # olumlu durum (success)
+RED           = "#ff7b72"   # olumsuz durum (danger)
+YELL          = "#d29922"   # uyari / orta gecikme (warning)
+WHITE         = "#ffffff"   # aksan buton metni
+SWITCH_OFF    = "#343a46"   # kapali track (koyu)
+SWITCH_BORDER = "#4b5563"   # track kenarligi (kapaliyken de gorunur)
+SWITCH_KNOB   = "#f8fafc"   # dugme (acik)
+SWITCH_KNOB_H = "#ffffff"   # dugme hover
+DANGER_HOVER  = "#5a2027"   # danger hover yuzeyi (uzerindeki metin okunur kalir)
 
-FONT = "Segoe UI"       # Win11 yerel, keskin ve modern
+# ── Header (CTkCanvas manuel cizim) — tek koyu, cok hafif gradient ───────────
+HEADER_BG    = "#151a2e"                          # canvas bg (anti-flash) = gradientin koyu ucu
+HDR_GRAD     = ["#151a2e", "#1a2140", "#202a55"]  # cok hafif gradient bant
+HDR_VERSION  = "#aeb8ff"                          # surum metni
+HDR_PILL_BG  = "#101624"                          # yonetici pill zemini + keyhole
+HDR_ACCENT   = "#5865f2"                          # alt aksan cizgisi (blurple)
+HDR_ADMIN_OK = "#7ee2a8"                          # yonetici olumlu (pill uzerinde yuksek kontrast)
+HDR_ADMIN_NO = "#ffb3b6"                          # yonetici olumsuz
+
+_FALLBACK_FONT = "Segoe UI"
+_INTER_FONT_FILES = ("Inter-Regular.ttf", "Inter-Bold.ttf")
+_FR_PRIVATE = 0x10
+
+
+def _load_private_ui_font() -> str:
+    """Load bundled Inter faces for this process, with a safe system fallback."""
+    if os.name != "nt":
+        return _FALLBACK_FONT
+
+    loaded = []
+    try:
+        add_font = ctypes.windll.gdi32.AddFontResourceExW
+        add_font.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p]
+        add_font.restype = ctypes.c_int
+
+        for filename in _INTER_FONT_FILES:
+            path = os.path.abspath(resource_path("assets", "fonts", filename))
+            if not os.path.isfile(path) or add_font(path, _FR_PRIVATE, None) == 0:
+                raise OSError(f"Could not load bundled font: {filename}")
+            loaded.append(path)
+    except Exception:
+        # Avoid leaving only one face registered if the second load fails.
+        try:
+            remove_font = ctypes.windll.gdi32.RemoveFontResourceExW
+            for path in loaded:
+                remove_font(path, _FR_PRIVATE, None)
+        except Exception:
+            pass
+        return _FALLBACK_FONT
+
+    return "Inter"
+
+
+FONT = _load_private_ui_font()
+
+
+def _verify_ui_font():
+    """AddFontResourceEx basarili olsa bile Tk fontu gercekten cozemeyebilir
+    (nadir). Bir Tk koku olustuktan SONRA cagirilir; FONT Tk tarafindan
+    gorulmuyorsa guvenli sekilde Segoe UI'ye doner. Boylece 'erisim basarisiz'
+    durumunda da fallback garanti olur."""
+    global FONT
+    if FONT == _FALLBACK_FONT:
+        return
+    try:
+        from tkinter import font as tkfont
+        if FONT not in tkfont.families():
+            FONT = _FALLBACK_FONT
+    except Exception:
+        FONT = _FALLBACK_FONT
 
 
 def _f(size: int, weight: str = "normal") -> "ctk.CTkFont":
@@ -164,7 +226,8 @@ def _freeze_window(win):
 
         @_WNDPROC
         def _proc(hWnd, msg, wParam, lParam):
-            if msg == _WM_WINDOWPOSCHANGING and lParam:
+            if (msg == _WM_WINDOWPOSCHANGING and lParam
+                    and not getattr(win, "_allow_programmatic_move", False)):
                 ctypes.cast(lParam, ctypes.POINTER(_WINDOWPOS)).contents.flags |= _SWP_NOMOVE
             return u.CallWindowProcW(state["old"], hWnd, msg, wParam, lParam)
 
@@ -174,6 +237,65 @@ def _freeze_window(win):
         win._old_wndproc = state["old"]
     except Exception:
         pass
+
+
+def _dock_window(app, win, w: int, h: int, align_top: bool = True):
+    """Yan pencereyi ana pencereye bitisik tutar.
+
+    Kullanici yan pencereyi surukleyemez; ana pencere tasindiginda Configure
+    olayi tek bir idle callback'e indirgenir ve yan pencere ayni kenara yeniden
+    yerlestirilir. Ekranin saginda yer yoksa iki pencere birlikte sol kenardan
+    baglanir. Destroy sirasinda bind/after temizlenir.
+    """
+    place = _place_beside_top if align_top else _place_beside
+    place(app, win, w, h)
+    _freeze_window(win)
+
+    state = {"after": None, "moving": False}
+
+    def _move_with_parent():
+        state["after"] = None
+        try:
+            if not win.winfo_exists():
+                return
+            state["moving"] = True
+            win._allow_programmatic_move = True
+            place(app, win, w, h)
+            win.update_idletasks()
+        except Exception:
+            pass
+        finally:
+            win._allow_programmatic_move = False
+            state["moving"] = False
+
+    def _schedule_move(event=None):
+        if event is not None and event.widget is not app:
+            return
+        if state["moving"] or state["after"] is not None:
+            return
+        try:
+            state["after"] = app.after_idle(_move_with_parent)
+        except Exception:
+            state["after"] = None
+
+    bind_id = app.bind("<Configure>", _schedule_move, add="+")
+
+    def _cleanup(event):
+        if event.widget is not win:
+            return
+        try:
+            if state["after"] is not None:
+                app.after_cancel(state["after"])
+        except Exception:
+            pass
+        try:
+            app.unbind("<Configure>", bind_id)
+        except Exception:
+            pass
+        state["after"] = None
+
+    win.bind("<Destroy>", _cleanup, add="+")
+    win._dock_refs = (_schedule_move, _move_with_parent, _cleanup)
 
 # Discord acilirken sistem DNS'i bu degerlere ayarlanir (Cloudflare)
 DNS_V4 = ("1.1.1.1", "1.0.0.1")
@@ -192,8 +314,11 @@ class DPortApp(ctk.CTk):
         self.cfg = ConfigManager(user_data_path("config.json"))
         set_lang(self.cfg.get("language", "tr"))
 
+        # DPort tek koyu temali: her acilista sabit koyu. Config'ten tema okunmaz,
+        # Windows/System temasi takip edilmez.
         ctk.set_appearance_mode("dark")
         super().__init__()
+        _verify_ui_font()   # Inter'e Tk gercekten erisebiliyor mu; degilse Segoe UI
 
         self.log_mgr = LogManager(
             user_data_path("dport.log"),
@@ -363,25 +488,28 @@ class DPortApp(ctk.CTk):
             pass
 
     # ─────────────── Tutarli monokrom ikonlar (emoji yerine) ───────────────
-    def _ico(self, kind: str, color: str = MUTED, px: int = 16):
-        """Her yerde AYNI kutu boyutu ve cizgi kalinliginda, PIL ile cizilmis
-        monokrom ikon dondurur (emojiler OS'a gore farkli boyutta cikiyordu)."""
+    def _ico(self, kind: str, color=MUTED, px: int = 16):
+        """Tek koyu tema: scalar renkten monokrom ikon (PIL) cizip CTkImage olarak
+        onbellekler."""
         cache = getattr(self, "_icon_cache", None)
         if cache is None:
             cache = self._icon_cache = {}
         k = (kind, color, px)
         if k not in cache:
             try:
-                cache[k] = self._draw_icon(kind, color, px)
+                im = self._draw_icon_image(kind, color, px)
+                cache[k] = ctk.CTkImage(light_image=im, dark_image=im, size=(px, px))
             except Exception:
                 cache[k] = None
         return cache[k]
 
     @staticmethod
-    def _draw_icon(kind: str, color: str, px: int):
+    def _draw_icon_image(kind: str, color: str, px: int):
+        """Tek renk hex ile bir monokrom ikonu PIL Image olarak cizer (5x cizip
+        CTkImage kuculterek keskinlestirir)."""
         import math
         from PIL import Image, ImageDraw
-        S = px * 5                                   # 5x ciz, CTkImage kuculterek keskinlestirir
+        S = px * 5
         rgb = tuple(int(color[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
         im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
@@ -430,16 +558,17 @@ class DPortApp(ctk.CTk):
             d.ellipse([pad, pad, S - pad, S - pad], outline=rgb, width=w)
             d.line([cx, cy, cx, cy - S * 0.24], fill=rgb, width=w)   # dakika ibresi
             d.line([cx, cy, cx + S * 0.17, cy], fill=rgb, width=w)   # saat ibresi
-        return ctk.CTkImage(light_image=im, dark_image=im, size=(px, px))
+        return im
 
     @staticmethod
-    def _lock_photo(color: str, px: int):
+    def _lock_photo(color: str, px: int, bg_hex: str = "#11151f"):
         """Yonetici pill'i icin kucuk, DOLU kilit (canvas'a create_image ile konur;
-        boylece emoji hizasizligi olmaz, tam ortali/orantili durur)."""
+        boylece emoji hizasizligi olmaz, tam ortali/orantili durur). Keyhole zemini
+        pill zeminine (bg_hex) esitlenir; boylece tema degisince oyulmus gorunur."""
         from PIL import Image, ImageDraw, ImageTk
         S = px * 6
         rgb = tuple(int(color[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
-        kb = (18, 20, 29, 255)                        # pill zemini (#12141d) = keyhole
+        kb = tuple(int(bg_hex[i:i + 2], 16) for i in (1, 3, 5)) + (255,)  # keyhole = pill zemini
         im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
         sw = max(2, round(S * 0.12))
@@ -459,67 +588,71 @@ class DPortApp(ctk.CTk):
 
         # 2) Govde
         body = ctk.CTkFrame(self, fg_color=BG)
-        body.pack(fill="both", expand=True, padx=16, pady=(12, 12))
+        body.pack(fill="both", expand=True, padx=12, pady=(12, 10))
 
         # HERO — buyuk baglanti durum karti (canli durum noktasi + ping gostergesi)
         self.hero = ctk.CTkFrame(body, fg_color=CARD, corner_radius=16,
                                  border_width=1, border_color=BORDER)
-        self.hero.pack(fill="x", pady=(0, 11))
+        self.hero.pack(fill="x", pady=(0, 9))
         h = ctk.CTkFrame(self.hero, fg_color="transparent")
-        h.pack(fill="x", padx=17, pady=15)
+        h.pack(fill="x", padx=17, pady=12)
         h.grid_columnconfigure(1, weight=1)
 
+        # Alt aciklama satirlari kaldirildi (istek): yalnizca durum baslgi + nokta
+        # + ping. Baslik dikey ortali.
         self.hero_dot = ctk.CTkLabel(h, text="●", font=_f(24), text_color=MUTED)
-        self.hero_dot.grid(row=0, column=0, rowspan=2, padx=(0, 13))
+        self.hero_dot.grid(row=0, column=0, padx=(0, 13))
         self.hero_state = ctk.CTkLabel(h, text=L["hero_off"], font=_f(16, "bold"),
                                        text_color=SUB, anchor="w")
-        self.hero_state.grid(row=0, column=1, sticky="sw")
-        self.hero_sub = ctk.CTkLabel(h, text=L["hero_hint"], font=_f(10),
-                                     text_color=MUTED, anchor="w")
-        self.hero_sub.grid(row=1, column=1, sticky="nw")
+        self.hero_state.grid(row=0, column=1, sticky="w")
         self.hero_ping = ctk.CTkLabel(h, text="—", font=_f(21, "bold"),
                                       text_color=MUTED)
-        self.hero_ping.grid(row=0, column=2, rowspan=2, sticky="e", padx=(8, 0))
+        self.hero_ping.grid(row=0, column=2, sticky="e", padx=(8, 0))
 
-        # Detay karti — ikonlu, ayracli satirlar
-        card = ctk.CTkFrame(body, fg_color=CARD, corner_radius=14,
-                            border_width=1, border_color=BORDER)
-        card.pack(fill="x")
-        inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(fill="x", padx=3, pady=3)
-        inner.grid_columnconfigure(0, weight=1)
-        inner.grid_columnconfigure(1, weight=0)
+        # Bilgi alani — 2x2 mini-kart grid (tek duz blok yerine ritimli KPI
+        # kartlari). Sira KESIN: [Surum | DNS] ust, [Sunucular | Aktif Sure] alt.
+        # Her kart: ust = ikon + etiket (muted), alt = dinamik deger (bold).
+        grid = ctk.CTkFrame(body, fg_color="transparent")
+        grid.pack(fill="x")
+        grid.grid_columnconfigure(0, weight=1, uniform="cell")
+        grid.grid_columnconfigure(1, weight=1, uniform="cell")
 
         self.dash = {}
-        rows = [
-            ("version", "tile",   L["dash_version"]),
-            ("dns",     "globe",  L["dash_dns"]),
-            ("servers", "unlock", L["dash_servers"]),
-            ("uptime",  "clock",  L["dash_uptime"]),
+        cells = [
+            (0, 0, "version", "tile",   L["dash_version"]),
+            (0, 1, "dns",     "globe",  L["dash_dns"]),
+            (1, 0, "servers", "unlock", L["dash_servers"]),
+            (1, 1, "uptime",  "clock",  L["dash_uptime"]),
         ]
-        r = 0
-        for i, (key, icon, label) in enumerate(rows):
+        for row, col, key, icon, label in cells:
+            cell = ctk.CTkFrame(grid, fg_color=CARD, corner_radius=12,
+                                border_width=1, border_color=BORDER_STRONG, height=72)
+            cell.grid(row=row, column=col, sticky="nsew",
+                      padx=(0, 4) if col == 0 else (4, 0),
+                      pady=(0, 4) if row == 0 else (4, 0))
+            cell.pack_propagate(False)   # tum kartlar esit yukseklikte kalir
             ctk.CTkLabel(
-                inner, image=self._ico(icon, MUTED, 16), text=f"   {label}",
-                compound="left", font=_f(11), text_color=MUTED, anchor="w",
-            ).grid(row=r, column=0, sticky="w", padx=(13, 8), pady=9)
+                cell, image=self._ico(icon, MUTED, 18), text=f"  {label}",
+                compound="left", font=_f(10), text_color=MUTED, anchor="w",
+            ).pack(fill="x", padx=11, pady=(8, 0), anchor="w")
+            # Deger: uzun metin (or. Acilan Sunucular degeri) dar kartta 2 satira
+            # sarar; metin degismez, kirpma olmaz. 'servers' biraz kucuk font.
             val = ctk.CTkLabel(
-                inner, text=L["val_none"], font=_f(12, "bold"),
-                text_color=TEXT, anchor="e",
+                cell, text=L["val_none"],
+                font=_f(11, "bold") if key == "servers" else _f(13, "bold"),
+                text_color=TEXT, anchor="w", justify="left",
+                # servers: kompakt metin tek satira sigsin (sarma esigi genis);
+                # digerleri: uzun deger (or. 'Discord kurulu degil') 2 satira sarabilsin.
+                wraplength=150 if key == "servers" else 126,
             )
-            val.grid(row=r, column=1, sticky="e", padx=(8, 13))
+            val.pack(fill="x", padx=11, pady=(1, 6), anchor="w")
             self.dash[key] = val
-            r += 1
-            if i < len(rows) - 1:  # satir ayraci
-                ctk.CTkFrame(inner, height=1, fg_color=BORDER).grid(
-                    row=r, column=0, columnspan=2, sticky="ew", padx=13)
-                r += 1
 
         # Butonlar — YAN YANA (tek satir). Ana buton (Discord'u Ac) daha genis
         # (3:2), accent + play ikonu; ikincil (Normale Don) ghost.
-        BTN_H = 46
+        BTN_H = 42
         btnrow = ctk.CTkFrame(body, fg_color="transparent")
-        btnrow.pack(fill="x", pady=(14, 0))
+        btnrow.pack(fill="x", pady=(12, 0))
         btnrow.grid_columnconfigure(0, weight=1, uniform="b")
         btnrow.grid_columnconfigure(1, weight=1, uniform="b")
 
@@ -532,7 +665,8 @@ class DPortApp(ctk.CTk):
 
         self.btn_restore = ctk.CTkButton(
             btnrow, text=L["btn_restore"], height=BTN_H, corner_radius=12,
-            fg_color="transparent", hover_color=CARD2, text_color=SUB,
+            fg_color="transparent", hover_color=HOVER, text_color=SUB,
+            text_color_disabled=DISABLED,
             border_width=1, border_color=BORDER,
             font=_f(13, "bold"), command=self._restore_normal,
         )
@@ -546,20 +680,20 @@ class DPortApp(ctk.CTk):
         # Ikonlar — fill YOK; frame icerige gore kuculup yatayda ortalanir.
         # Daha belirgin: buyuk kutu + parlak (TEXT) ikon + kalin cizgi (px=20).
         iconrow = ctk.CTkFrame(bot, fg_color="transparent")
-        iconrow.pack(pady=(14, 0))
+        iconrow.pack(pady=(10, 0))
         for kind, cmd in (("gear", self._open_settings),
                           ("help", self._open_help),
                           ("info", self._open_about)):
             ctk.CTkButton(
                 iconrow, text="", image=self._ico(kind, TEXT, 19),
                 width=32, height=32, corner_radius=16,
-                fg_color=CARD2, hover_color=BLURPLE,
+                fg_color=CARD2, hover_color=HOVER,
                 border_width=1, border_color=BORDER, command=cmd,
             ).pack(side="left", padx=4)
 
         # Durum — ortali (uzun mesaj sigacak kadar genis; kirpilmaz cunku pencere fit).
         statusrow = ctk.CTkFrame(bot, fg_color="transparent")
-        statusrow.pack(fill="x", pady=(11, 0))
+        statusrow.pack(fill="x", pady=(9, 0))
         inner = ctk.CTkFrame(statusrow, fg_color="transparent")
         inner.pack(anchor="center")
         self.status_dot = ctk.CTkLabel(inner, text="●", font=_f(13), text_color=MUTED)
@@ -571,7 +705,7 @@ class DPortApp(ctk.CTk):
 
     # ── Degradeli baslik bandi ──────────────────────────────────────────────
     def _build_header(self):
-        H = 74
+        H = 66
         try:
             # bg=HEADER_BG: ham CTkCanvas'in varsayilan (acik) arka plani yerine
             # ILK KAREDEN koyu. Yuksek DPI'da (window scaling) canvas gercek
@@ -590,8 +724,10 @@ class DPortApp(ctk.CTk):
             self._redraw_header(self.W)
             canvas.bind("<Configure>", self._on_header_configure)
         except Exception:
-            # Guvenli geri donus: duz renk baslik
-            hdr = ctk.CTkFrame(self, fg_color=CARD, height=H)
+            # Guvenli geri donus: duz renkli bant. HEADER_BG (renkli, iki temada da
+            # koyu-yeterli) uzerine WHITE metin -> light'ta da kontrast korunur
+            # (CARD beyaz olabildigi icin CARD+WHITE gorunmez kalirdi).
+            hdr = ctk.CTkFrame(self, fg_color=HEADER_BG, height=H)
             hdr.pack(fill="x")
             ctk.CTkLabel(hdr, text=f"  {L['title']} v{self.VERSION}", font=_f(16, "bold"),
                          text_color=WHITE).pack(side="left", padx=18, pady=20)
@@ -609,10 +745,9 @@ class DPortApp(ctk.CTk):
                 self._logo_img = ImageTk.PhotoImage(im)
             except Exception:
                 self._logo_img = None
-        try:
-            self._pill_img = self._lock_photo(GREEN if self._is_admin() else RED, 12)
-        except Exception:
-            self._pill_img = None
+        # Yonetici rozeti kaldirildi (program zaten yonetici olarak calisiyor:
+        # exe uac_admin + installer PrivilegesRequired=admin + main.py UAC yukseltme).
+        self._pill_img = None
 
     def _on_header_configure(self, event):
         """Canvas gercek genisligi degistiginde (DPI olcegi / ilk yerlesim) tam
@@ -630,8 +765,8 @@ class DPortApp(ctk.CTk):
         H = self._header_h
         self._header_w = width
         c.delete("all")
-        # Koyu, indigo-tonlu ince degrade — tam genislik.
-        self._draw_gradient(c, width, H, ["#161826", "#1d2138", "#252a4c"])
+        # Tek koyu, cok hafif gradient — tam genislik.
+        self._draw_gradient(c, width, H, HDR_GRAD)
 
         # Sol: logo + baslik + surum
         text_x = 60
@@ -643,28 +778,12 @@ class DPortApp(ctk.CTk):
         c.create_text(text_x, H // 2 - 8, anchor="w", text=L["title"],
                       font=(FONT, 18, "bold"), fill=WHITE)
         c.create_text(text_x, H // 2 + 12, anchor="w", text=f"v{self.VERSION}",
-                      font=(FONT, 9, "bold"), fill=BLURPLE_L)
+                      font=(FONT, 9, "bold"), fill=HDR_VERSION)
 
-        # Sag: yonetici pill — SAG kenara (gercek width) hizali.
-        adm = self._is_admin()
-        pill_txt = L["admin_yes"] if adm else L["admin_no"]
-        col = GREEN if adm else RED
-        cy = H // 2
-        iw = 12 if self._pill_img else 0
-        pad_l, gap, pad_r = 10, 5, 12
-        tw = len(pill_txt) * 6 + 2                 # metin genisligi (yaklasik)
-        pw = pad_l + iw + gap + tw + pad_r
-        x2 = width - 14
-        x1 = x2 - pw
-        self._round_rect(c, x1, cy - 12, x2, cy + 12, 11,
-                         fill="#12141d", outline=col, width=1)
-        if self._pill_img:                         # kilit — dikey ortali
-            c.create_image(x1 + pad_l + iw / 2, cy, image=self._pill_img)
-        c.create_text(x1 + pad_l + iw + gap, cy, anchor="w",
-                      text=pill_txt, font=(FONT, 9, "bold"), fill=col)
+        # (Yonetici rozeti kaldirildi — program zaten yonetici calisiyor.)
 
-        # Alt aksan cizgisi — ince blurple, tam genislik.
-        c.create_rectangle(0, H - 2, width, H, fill=BLURPLE, outline="")
+        # Alt aksan cizgisi — tam genislik.
+        c.create_rectangle(0, H - 2, width, H, fill=HDR_ACCENT, outline="")
 
     def _draw_logo(self, canvas, cx, cy, s):
         """Beyaz yuvarlak-kare rozet + blurple simsek (hizli baglanti)."""
@@ -783,15 +902,20 @@ class DPortApp(ctk.CTk):
         if active:
             self.hero_dot.configure(text_color=GREEN)
             self.hero_state.configure(text=L["hero_on"], text_color=TEXT)
-            self.hero_sub.configure(text=L["hero_sub_on"], text_color=SUB)
-            self.hero_ping.configure(text=ping_txt, text_color=self._ping_color(ping_ms))
-            self.hero.configure(border_color=GREEN)
+            # ms hazirsa buyuk sayi; henuz olculuyorsa kucuk+soluk (21px'te "olculuyor..."
+            # kocaman ve gereksiz duruyordu).
+            if ping_ms:
+                self.hero_ping.configure(text=ping_txt, font=_f(21, "bold"),
+                                         text_color=self._ping_color(ping_ms))
+            else:
+                self.hero_ping.configure(text=ping_txt, font=_f(11),
+                                         text_color=MUTED)
+            self.hero.configure(border_color=GREEN, border_width=2)   # aktifken daha kalin cerceve
         else:
             self.hero_dot.configure(text_color=MUTED)
             self.hero_state.configure(text=L["hero_off"], text_color=SUB)
-            self.hero_sub.configure(text=L["hero_hint"], text_color=MUTED)
-            self.hero_ping.configure(text="—", text_color=MUTED)
-            self.hero.configure(border_color=BORDER)
+            self.hero_ping.configure(text="—", font=_f(21, "bold"), text_color=MUTED)
+            self.hero.configure(border_color=BORDER, border_width=1)
 
         self.dash["version"].configure(
             text=ver_txt, text_color=TEXT if ver else MUTED)
@@ -997,11 +1121,24 @@ class DPortApp(ctk.CTk):
             time.sleep(0.3)
         return not is_discord_running()
 
+    # ─────────────── Temali dialog (native messagebox yerine) ───────────────
+    def _ask(self, title, message) -> bool:
+        """Uygulama gorunumuyle uyumlu koyu Evet/Hayir onayi. Ana thread'den
+        cagrilmali (wait_window). native askyesno ile ayni bool semantigi."""
+        dlg = _ModalDialog(self, title, message, confirm=True)
+        self.wait_window(dlg)
+        return bool(dlg.result)
+
+    def _notify(self, title, message):
+        """Uygulama gorunumuyle uyumlu koyu bilgi/hata penceresi (tek Tamam)."""
+        dlg = _ModalDialog(self, title, message, confirm=False)
+        self.wait_window(dlg)
+
     # ─────────────────────────── Normale Don ───────────────────────────
     def _restore_normal(self):
         if self._busy:
             return
-        if not messagebox.askyesno(L["dlg_restore_t"], L["dlg_restore_msg"]):
+        if not self._ask(L["dlg_restore_t"], L["dlg_restore_msg"]):
             return
         self._busy = True
         self.btn_restore.configure(state="disabled")
@@ -1230,7 +1367,7 @@ class DPortApp(ctk.CTk):
             info = check_latest_release(self.VERSION)
         except UpdateError as exc:
             if notify_when_current:
-                self.after(0, lambda: messagebox.showerror(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
+                self.after(0, lambda: self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
                 self.after(0, lambda: self._st(L["st_ready"], SUB))
             return
 
@@ -1241,7 +1378,7 @@ class DPortApp(ctk.CTk):
             self._update_prompted_version = version
             self.after(0, lambda: self._prompt_update(info))
         elif notify_when_current:
-            self.after(0, lambda: messagebox.showinfo(
+            self.after(0, lambda: self._notify(
                 L["update_title"],
                 L["update_current"].format(version=self.VERSION),
             ))
@@ -1250,14 +1387,14 @@ class DPortApp(ctk.CTk):
     def _prompt_update(self, info: dict):
         version = info.get("version") or "?"
         if not info.get("download_url"):
-            if messagebox.askyesno(
+            if self._ask(
                 L["update_title"],
                 L["update_no_asset"].format(version=version),
             ):
                 self._open_releases_page()
             return
 
-        if messagebox.askyesno(
+        if self._ask(
             L["update_title"],
             L["update_available"].format(version=version, current=self.VERSION),
         ):
@@ -1268,17 +1405,17 @@ class DPortApp(ctk.CTk):
         try:
             path = download_update(info, user_data_path("updates"))
         except UpdateError as exc:
-            self.after(0, lambda: messagebox.showerror(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
+            self.after(0, lambda: self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
             self.after(0, lambda: self._st(L["st_ready"], SUB))
             return
 
         def _launch():
-            if messagebox.askyesno(L["update_title"], L["update_downloaded"]):
+            if self._ask(L["update_title"], L["update_downloaded"]):
                 try:
                     subprocess.Popen([path])
                     self.after(500, self.destroy)
                 except Exception as exc:
-                    messagebox.showerror(L["update_title"], f"{L['update_failed']}\n\n{exc}")
+                    self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}")
                     self._st(L["st_ready"], SUB)
             else:
                 self._st(L["st_ready"], SUB)
@@ -1420,8 +1557,7 @@ class _AboutWindow(ctk.CTkToplevel):
         self.update_idletasks()
         h = max(306, self.winfo_reqheight() + 6)
         self.transient(app)
-        _place_beside_top(app, self, 322, h)
-        _freeze_window(self)
+        _dock_window(app, self, 322, h, align_top=True)
 
     def _build(self):
         pad = ctk.CTkFrame(self, fg_color=BG)
@@ -1517,7 +1653,7 @@ class _CloseDialog(ctk.CTkToplevel):
         row.pack(fill="x", side="bottom")
         row.grid_columnconfigure((0, 1), weight=1)
         ctk.CTkButton(row, text=L["close_quit"], height=40, corner_radius=10,
-                      fg_color="transparent", hover_color=CARD2, text_color=SUB,
+                      fg_color="transparent", hover_color=HOVER, text_color=SUB,
                       border_width=1, border_color=BORDER, font=_f(12),
                       command=lambda: self._choose("quit")).grid(row=0, column=0, sticky="ew", padx=(0, 5))
         ctk.CTkButton(row, text=L["close_tray"], height=40, corner_radius=10,
@@ -1535,6 +1671,66 @@ class _CloseDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+# ═══════════════════════════ Temali modal dialog ═══════════════════════════
+class _ModalDialog(ctk.CTkToplevel):
+    """Uygulama gorunumuyle uyumlu koyu modal — native messagebox yerine.
+    confirm=True: Evet/Hayir (result True/False); confirm=False: tek Tamam
+    (bilgi/hata, result True). Ust hizali degil, ana pencere ortasina yakin."""
+    def __init__(self, app, title, message, confirm=True, ok_text=None, cancel_text=None):
+        super().__init__(app)
+        self.result = False
+        self.title(title)
+        self.resizable(False, False)
+        self.configure(fg_color=BG)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        _apply_win_icon(self)
+        self._build(title, message, confirm, ok_text, cancel_text)
+        self.update_idletasks()
+        w, h = 340, self.winfo_reqheight() + 4
+        app.update_idletasks()
+        x = app.winfo_x() + (app.winfo_width() - w) // 2
+        y = app.winfo_y() + (app.winfo_height() - h) // 3
+        self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        self.transient(app)
+        self.grab_set()
+        self.attributes("-topmost", True)
+        self.bind("<Escape>", lambda e: self._cancel())
+
+    def _build(self, title, message, confirm, ok_text, cancel_text):
+        pad = ctk.CTkFrame(self, fg_color=BG)
+        pad.pack(fill="both", expand=True, padx=18, pady=16)
+        ctk.CTkLabel(pad, text=title, font=_f(15, "bold"),
+                     text_color=TEXT, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(pad, text=message, font=_f(11), text_color=SUB,
+                     anchor="w", justify="left", wraplength=300).pack(anchor="w", pady=(6, 14))
+        row = ctk.CTkFrame(pad, fg_color="transparent")
+        row.pack(fill="x", side="bottom")
+        if confirm:
+            row.grid_columnconfigure((0, 1), weight=1)
+            ctk.CTkButton(row, text=cancel_text or L["dlg_no"], height=40, corner_radius=10,
+                          fg_color="transparent", hover_color=HOVER, text_color=SUB,
+                          border_width=1, border_color=BORDER, font=_f(12),
+                          command=self._cancel).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+            ctk.CTkButton(row, text=ok_text or L["dlg_yes"], height=40, corner_radius=10,
+                          fg_color=BLURPLE, hover_color=BLURPLE_H, text_color=WHITE,
+                          font=_f(12, "bold"),
+                          command=self._ok).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        else:
+            row.grid_columnconfigure(0, weight=1)
+            ctk.CTkButton(row, text=ok_text or L["dlg_ok"], height=40, corner_radius=10,
+                          fg_color=BLURPLE, hover_color=BLURPLE_H, text_color=WHITE,
+                          font=_f(12, "bold"),
+                          command=self._ok).grid(row=0, column=0, sticky="ew")
+
+    def _ok(self):
+        self.result = True
+        self.destroy()
+
+    def _cancel(self):
+        self.result = False
+        self.destroy()
+
+
 # ═══════════════════════════ Sorun giderme penceresi ═══════════════════════════
 class _HelpWindow(ctk.CTkToplevel):
     def __init__(self, app):
@@ -1549,8 +1745,7 @@ class _HelpWindow(ctk.CTkToplevel):
         # kaydirilabilir alani doldurur (bos alan kalmaz). Ust hizali ve sabit.
         app.update_idletasks()
         self.transient(app)
-        _place_beside_top(app, self, 384, max(470, app.winfo_height()))
-        _freeze_window(self)
+        _dock_window(app, self, 384, max(470, app.winfo_height()), align_top=True)
 
     def _build(self):
         ctk.CTkLabel(
@@ -1583,10 +1778,12 @@ class _LogWindow(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title(L["log_title"])
+        self.resizable(False, False)
         self.configure(fg_color=BG)
         _apply_win_icon(self)
         self._build()
-        _place_beside(app, self, 480, 440)
+        self.transient(app)
+        _dock_window(app, self, 480, 440, align_top=False)
 
     def _build(self):
         top = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0, height=52)
@@ -1598,7 +1795,7 @@ class _LogWindow(ctk.CTkToplevel):
         ).pack(side="left", padx=16, pady=10)
         ctk.CTkButton(
             top, text=L["log_clear"], width=88, height=30, corner_radius=8,
-            fg_color="transparent", hover_color=RED, text_color=SUB,
+            fg_color="transparent", hover_color=DANGER_HOVER, text_color=SUB,
             border_width=1, border_color=BORDER,
             font=_f(11, "bold"), command=self._clear,
         ).pack(side="right", padx=12, pady=10)
@@ -1621,7 +1818,7 @@ class _LogWindow(ctk.CTkToplevel):
         self.txt.configure(state="disabled")
 
     def _clear(self):
-        if messagebox.askyesno(L["log_confirm_t"], L["log_confirm_msg"]):
+        if self.app._ask(L["log_confirm_t"], L["log_confirm_msg"]):
             self.app.log_mgr.clear()
             self._load()
 
@@ -1641,8 +1838,7 @@ class _SettingsWindow(ctk.CTkToplevel):
         self.update_idletasks()
         h = self.winfo_reqheight() + 6
         self.transient(app)
-        _place_beside_top(app, self, 320, h)
-        _freeze_window(self)
+        _dock_window(app, self, 320, h, align_top=True)
 
     def _build(self):
         ctk.CTkLabel(
@@ -1667,8 +1863,10 @@ class _SettingsWindow(ctk.CTkToplevel):
                 text_color=SUB, anchor="w",
             ).grid(row=i, column=0, sticky="w", padx=(14, 10), pady=13)
             sw = ctk.CTkSwitch(
-                block, text="", fg_color=CARD2, progress_color=GREEN,
-                button_color=WHITE, width=40, switch_width=40, switch_height=20,
+                block, text="", fg_color=SWITCH_OFF, progress_color=GREEN,
+                border_color=SWITCH_BORDER, border_width=2,
+                button_color=SWITCH_KNOB, button_hover_color=SWITCH_KNOB_H,
+                width=44, switch_width=44, switch_height=22, corner_radius=11,
                 command=lambda k=cfg_key, c=cb: self._toggle(k, c),
             )
             sw.grid(row=i, column=1, sticky="e", padx=(0, 14), pady=13)
@@ -1692,6 +1890,8 @@ class _SettingsWindow(ctk.CTkToplevel):
             langrow, values=["Türkçe", "English"], width=116, height=30,
             corner_radius=8, font=_f(11, "bold"),
             fg_color=CARD2, button_color=BLURPLE, button_hover_color=BLURPLE_H,
+            text_color=TEXT, dropdown_fg_color=CARD, dropdown_text_color=TEXT,
+            dropdown_hover_color=CARD2,
             command=self._set_lang,
         )
         self.lang_menu.set("Türkçe" if current_lang() == "tr" else "English")
@@ -1700,14 +1900,14 @@ class _SettingsWindow(ctk.CTkToplevel):
         # Loglari Goster (footer'dan buraya tasindi)
         ctk.CTkButton(
             self, text=L["tip_log"], height=34, corner_radius=10,
-            fg_color="transparent", hover_color=CARD2, text_color=SUB,
+            fg_color="transparent", hover_color=HOVER, text_color=SUB,
             border_width=1, border_color=BORDER, font=_f(11),
             command=lambda: (self.destroy(), self.app._open_log()),
         ).pack(fill="x", padx=20, pady=(12, 4))
 
         ctk.CTkButton(
             self, text=L["update_check"], height=34, corner_radius=10,
-            fg_color="transparent", hover_color=CARD2, text_color=SUB,
+            fg_color="transparent", hover_color=HOVER, text_color=SUB,
             border_width=1, border_color=BORDER, font=_f(11),
             command=lambda: (self.destroy(), self.app._check_update_clicked()),
         ).pack(fill="x", padx=20, pady=(8, 4))
@@ -1722,7 +1922,7 @@ class _SettingsWindow(ctk.CTkToplevel):
     def _toggle_startup(self, val):
         ok = enable_startup() if val else disable_startup()
         if not ok:
-            messagebox.showerror("Hata", "Başlangıç kaydı değiştirilemedi.")
+            self.app._notify("Hata", "Başlangıç kaydı değiştirilemedi.")
             self.switches["startup"].deselect() if val else self.switches["startup"].select()
 
     def _set_lang(self, choice):

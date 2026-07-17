@@ -9,7 +9,6 @@ from typing import Any
 
 DEFAULT_CONFIG = {
     "language": "tr",
-    "theme": "dark",
     "minimize_to_tray": True,
     "startup": False,
     "log_enabled": True,
