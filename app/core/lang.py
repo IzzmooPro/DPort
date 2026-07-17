@@ -26,7 +26,7 @@ TR = {
     "val_none":         "—",
     "val_measuring":    "ölçülüyor...",
     "val_not_installed":"Discord kurulu değil",
-    "servers_all":      "update · API · gateway · CDN",
+    "servers_all":      "update·API·gateway·CDN",
 
     # Hero (bağlantı kartı)
     "hero_on":          "Bağlantı Açık",
@@ -48,7 +48,7 @@ TR = {
     "st_opening_fast":  "Discord hızlı açılıyor...",
     "st_opened":        "Discord açıldı ✓",
     "st_restoring":     "Normale dönülüyor...",
-    "st_restored":      "Normale dönüldü (engel yolu kapatıldı)",
+    "st_restored":      "Normale dönüldü",
     "st_fail_port":     "Yol açılamadı (443 portu meşgul)",
     "st_fail_admin":    "Yol açılamadı (yönetici izni gerekli)",
     "st_fail_hosts_locked": "hosts dosyası şu an başka bir süreç tarafından kullanılıyor olabilir; birkaç saniye sonra tekrar deneyin",
@@ -61,6 +61,11 @@ TR = {
     "st_restart_close_failed": "Discord kapatılamadı, mevcut durumu korundu",
     "st_restart_close_timeout": "Discord zamanında kapanmadı, yeniden başlatma iptal edildi",
     "st_restart_launch_failed": "Discord kapatıldı ama yeniden başlatılamadı",
+
+    # Temali dialog butonlari
+    "dlg_yes":          "Evet",
+    "dlg_no":           "Hayır",
+    "dlg_ok":           "Tamam",
 
     # Normale dön onayı
     "dlg_restore_t":    "Normale Dön",
@@ -156,7 +161,7 @@ EN = {
     "val_none":         "—",
     "val_measuring":    "measuring...",
     "val_not_installed":"Discord not installed",
-    "servers_all":      "update · API · gateway · CDN",
+    "servers_all":      "update·API·gateway·CDN",
 
     "hero_on":          "Connected",
     "hero_off":         "Disconnected",
@@ -175,7 +180,7 @@ EN = {
     "st_opening_fast":  "Opening Discord (fast)...",
     "st_opened":        "Discord opened ✓",
     "st_restoring":     "Restoring normal...",
-    "st_restored":      "Restored (bypass path closed)",
+    "st_restored":      "Restored",
     "st_fail_port":     "Path failed (port 443 busy)",
     "st_fail_admin":    "Path failed (admin rights needed)",
     "st_fail_hosts_locked": "The hosts file may be in use by another process right now; try again in a few seconds",
@@ -188,6 +193,10 @@ EN = {
     "st_restart_close_failed": "Couldn't close Discord, kept its current state",
     "st_restart_close_timeout": "Discord didn't close in time, restart cancelled",
     "st_restart_launch_failed": "Discord was closed but could not be restarted",
+
+    "dlg_yes":          "Yes",
+    "dlg_no":           "No",
+    "dlg_ok":           "OK",
 
     "dlg_restore_t":    "Restore Normal",
     "dlg_restore_msg":  "Close the bypass path and set system DNS back to automatic (DHCP)?\n\nNote: If Discord is open its connection may drop.",

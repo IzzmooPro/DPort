@@ -34,3 +34,6 @@ Thumbs.db
 # Test/downloaded update artifacts
 release_builds/
 app/data/updates/
+
+# Ekran goruntuleri — GitHub'da yayinlanmiyor (yerelde tutulur)
+screenshots/

@@ -5,21 +5,8 @@
 **Discord'u Türkiye'de takılmadan, hızlı ve güncel şekilde açan küçük bir yardımcı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.2-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.3-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
-
-</div>
-
-## 🖥️ Uygulama Görünümü
-
-<div align="center">
-
-<img src="screenshots/DPort-1.png" alt="DPort v3.2 bağlantı kapalı görünümü" width="360">
-<img src="screenshots/Dport-2.png" alt="DPort v3.2 bağlantı açık görünümü" width="360">
-
-<br><br>
-
-<img src="screenshots/Dport-3.png" alt="DPort v3.2 ayarlar paneli" width="720">
 
 </div>
 
