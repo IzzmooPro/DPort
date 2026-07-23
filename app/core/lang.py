@@ -109,6 +109,7 @@ TR = {
     "update_no_asset":  "v{version} sürümü bulundu ama indirilebilir setup dosyası yok.\n\nGitHub Releases sayfası açılsın mı?",
     "update_downloaded":"Güncelleme indirildi.\n\nKurulumu başlatmak ve DPort'u kapatmak ister misin?",
     "update_failed":    "Güncelleme kontrolü tamamlanamadı.",
+    "update_verify_failed": "İndirilen güncelleme doğrulanamadı; güvenlik için çalıştırılmadı.",
     "st_update_checking":"Güncelleme kontrol ediliyor...",
     "st_update_downloading":"Güncelleme indiriliyor...",
 
@@ -234,6 +235,7 @@ EN = {
     "update_no_asset":  "v{version} is available but no setup file is attached.\n\nOpen GitHub Releases?",
     "update_downloaded":"The update was downloaded.\n\nStart setup and close DPort?",
     "update_failed":    "Update check could not be completed.",
+    "update_verify_failed": "The downloaded update could not be verified; it was not run for safety.",
     "st_update_checking":"Checking for updates...",
     "st_update_downloading":"Downloading update...",
 

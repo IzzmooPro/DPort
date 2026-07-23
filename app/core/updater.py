@@ -114,6 +114,20 @@ def _digest_matches(path: str, digest: Optional[str]) -> bool:
     return h.hexdigest() == expected
 
 
+def verify_download(path: str, digest: Optional[str]) -> bool:
+    """Indirilmis dosyayi (varsa) digest'e gore dogrular. Cagiran, dosyayi
+    CALISTIRMADAN HEMEN ONCE bunu yeniden cagirmali: indirme ile calistirma arasinda
+    yerel bir surec dosyayi degistirmis olabilir (TOCTOU); DPort yukseltilmis
+    calistigi icin degistirilmis exe de yuksek yetkiyle calisirdi. Dosya yoksa
+    False; digest yoksa (dogrulanamaz) True (eski davranis korunur)."""
+    try:
+        if not os.path.isfile(path):
+            return False
+    except Exception:
+        return False
+    return _digest_matches(path, digest)
+
+
 def _safe_filename(name: str) -> str:
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name or "")
     return name.strip(" .") or f"{APP_NAME}-Setup.exe"

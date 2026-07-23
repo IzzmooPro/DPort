@@ -32,7 +32,15 @@ def _cleanup_command() -> str:
 
 def install_logon_failsafe() -> bool:
     """Logon'da yuksek yetkiyle hosts temizleyen zamanlanmis gorevi kurar.
-    Once eski surumden kalmis gorevleri siler (isim degistiyse artik kalmasin)."""
+    Once eski surumden kalmis gorevleri siler (isim degistiyse artik kalmasin).
+
+    GUVENLIK: Gorev YALNIZCA paketlenmis (frozen) exe icin kurulur. Kaynaktan
+    calisirken gorev, yazilabilir bir .py betigine HIGHEST yetkiyle isaret ederdi;
+    yonetici-olmayan bir surec o betigi degistirip bir sonraki oturum acilisinda
+    yuksek yetkiyle calistirabilirdi (yerel yetki yukseltme). Bu yuzden kaynak
+    modunda gorev KURULMAZ — calisirken watchdog ve acilis self-heal zaten korur."""
+    if not getattr(sys, "frozen", False):
+        return False
     for old in _LEGACY_TASKS:
         try:
             subprocess.run(["schtasks", "/Delete", "/TN", old, "/F"],

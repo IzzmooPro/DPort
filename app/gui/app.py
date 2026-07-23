@@ -49,7 +49,7 @@ from core.app_info import (
     APP_VERSION,
     GITHUB_RELEASES_URL,
 )
-from core.updater import UpdateError, check_latest_release, download_update
+from core.updater import UpdateError, check_latest_release, download_update, verify_download
 
 # ── Tema — TEK KOYU tema (scalar hex; light/dark tuple YOK) ──────────────────
 # DPort tek temali: her acilista ayni koyu tasarim. Windows temasi okunmaz/takip
@@ -341,6 +341,17 @@ class DPortApp(ctk.CTk):
         # yonlendirmesini temizle; role kapaliyken bu satirlar Discord'u bozardi.
         try:
             remove_hosts_redirect()
+        except Exception:
+            pass
+        # Cokme kurtarma: onceki oturum DNS'i 1.1.1.1 yapip geri yuklemeden
+        # kapandiysa (config'te backup KALMISSA) sistem DNS'ini burada, UI acilmadan
+        # ve kullanici etkilesimi baslamadan ONCE orijinaline dondur. Boylece README'nin
+        # "cokmede otomatik onarir" sozu DNS icin de gecerli olur ve _open_discord ile
+        # yaris olmaz. Yedek yoksa hicbir sey yapmaz (normal acilis gecikmesi olmaz).
+        try:
+            if self.cfg.get("dns_backup"):
+                self._restore_dns()
+                self._flushdns()
         except Exception:
             pass
         atexit.register(self._disable_discord_unblock)
@@ -1411,6 +1422,14 @@ class DPortApp(ctk.CTk):
 
         def _launch():
             if self._ask(L["update_title"], L["update_downloaded"]):
+                # TOCTOU: indirme+dogrulama ile calistirma arasinda yerel bir surec
+                # dosyayi degistirmis olabilir. DPort yukseltilmis oldugundan
+                # degistirilmis exe de yuksek yetkiyle calisirdi -> CALISTIRMADAN
+                # HEMEN ONCE yeniden dogrula; uymazsa hic calistirma.
+                if not verify_download(path, info.get("digest")):
+                    self._notify(L["update_title"], L["update_verify_failed"])
+                    self._st(L["st_ready"], SUB)
+                    return
                 try:
                     subprocess.Popen([path])
                     self.after(500, self.destroy)
@@ -1488,6 +1507,13 @@ class DPortApp(ctk.CTk):
         except Exception:
             pass
         self._disable_discord_unblock()
+        # Kapanista sistem DNS'ini de orijinaline dondur (README: "kapaninca otomatik
+        # geri alinir"). Yalniz yedekledigimiz adaptorler geri yuklenir; yedek yoksa
+        # no-op. Kapanisi engellememesi icin hataya dayanikli.
+        try:
+            self._restore_dns()
+        except Exception:
+            pass
         super().destroy()
 
     def _on_close(self):

@@ -501,11 +501,24 @@ def _write_with_retry(compute: Callable[[], Optional[str]], backoffs) -> bool:
 
 
 def _strip_block(content: str) -> str:
-    """Kendi blogumuzu ve eski surumlerden kalan blogu (varsa) temizler."""
+    """Kendi blogumuzu ve eski surumlerden kalan blogu (varsa) temizler.
+
+    GUVENLIK/VERI KAYBI: Bitis isareti eksikse (yarim yazma, elle mudahale, bozuk
+    dosya) eskiden baslangic isaretinden dosya SONUNA kadar her satir silinirdi;
+    bu, kullanicinin bloktan sonraki ozel hosts kayitlarini yok edebilirdi. Artik
+    skip modunda YALNIZCA kendi bildigimiz '127.0.0.1 <blocked host>' satirlarini
+    sileriz; bize ait olmayan bir satir gelince blogu bitmis sayar ve o satiri
+    KORURUZ. Bitis isareti mevcutsa davranis oncekiyle aynidir."""
     begins = (HOSTS_MARK_BEGIN,) + tuple(b for b, _ in _LEGACY_MARKS)
     ends = (HOSTS_MARK_END,) + tuple(e for _, e in _LEGACY_MARKS)
     if not any(b in content for b in begins):
         return content
+    blocked = set(BLOCKED_HOSTS)
+
+    def _is_our_redirect(s: str) -> bool:
+        parts = s.split()
+        return len(parts) == 2 and parts[0] == "127.0.0.1" and parts[1] in blocked
+
     out = []
     skip = False
     for line in content.splitlines(keepends=True):
@@ -516,7 +529,12 @@ def _strip_block(content: str) -> str:
         if s in ends:
             skip = False
             continue
-        if not skip:
+        if skip:
+            if _is_our_redirect(s):
+                continue                 # bizim blok satirimiz -> sil
+            skip = False                 # yabanci satir -> blok bitti say, KORU
+            out.append(line)
+        else:
             out.append(line)
     return "".join(out)
 
