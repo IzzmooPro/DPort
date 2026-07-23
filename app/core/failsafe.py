@@ -30,6 +30,25 @@ def _cleanup_command() -> str:
     return f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}" --cleanup-hosts'
 
 
+def _exe_in_protected_location() -> bool:
+    """Calisan exe, standart kullanicinin YAZAMADIGI korumali bir konumda mi
+    (Program Files vb.)? Yuksek-yetkili logon gorevi yalnizca boyle bir konumdaki
+    exe'ye baglanmali; aksi halde (Masaustu/Indirilenler/AppData gibi yazilabilir
+    klasordeki portable exe) yonetici-olmayan bir surec exe'yi degistirip gorevle
+    yuksek yetkiyle calistirabilirdi (yerel yetki yukseltme)."""
+    try:
+        exe = os.path.normcase(os.path.abspath(sys.executable))
+        for var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+            root = os.environ.get(var)
+            if root:
+                root = os.path.normcase(os.path.abspath(root)) + os.sep
+                if exe.startswith(root):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def install_logon_failsafe() -> bool:
     """Logon'da yuksek yetkiyle hosts temizleyen zamanlanmis gorevi kurar.
     Once eski surumden kalmis gorevleri siler (isim degistiyse artik kalmasin).
@@ -38,8 +57,12 @@ def install_logon_failsafe() -> bool:
     calisirken gorev, yazilabilir bir .py betigine HIGHEST yetkiyle isaret ederdi;
     yonetici-olmayan bir surec o betigi degistirip bir sonraki oturum acilisinda
     yuksek yetkiyle calistirabilirdi (yerel yetki yukseltme). Bu yuzden kaynak
-    modunda gorev KURULMAZ — calisirken watchdog ve acilis self-heal zaten korur."""
-    if not getattr(sys, "frozen", False):
+    modunda gorev KURULMAZ — calisirken watchdog ve acilis self-heal zaten korur.
+
+    Ek olarak exe yalnizca KORUMALI konumdaysa (Program Files) gorev kurulur;
+    yazilabilir klasordeki portable exe icin kurulmaz (ayni LPE riski). Installer
+    ile Program Files'a kurulan surumler etkilenmez."""
+    if not getattr(sys, "frozen", False) or not _exe_in_protected_location():
         return False
     for old in _LEGACY_TASKS:
         try:

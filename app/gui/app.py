@@ -1288,15 +1288,52 @@ class DPortApp(ctk.CTk):
             self.cfg.set("dns_backup", backup)
             self.log_mgr.write(f"DNS | orijinal ayar yedeklendi ({len(backup)} adaptor)")
 
+    @staticmethod
+    def _sanitize_dns_snapshot(snap):
+        """config'ten gelen (kullanici tarafindan degistirilebilen) DNS yedegini
+        guvenli hale getirir: yalnizca GECERLI IP degerleri korunur, gerisi None
+        olur (ilgili aile otomatik/DHCP'ye doner). Boylece yerel bir surec config'i
+        kurcalayip yonetici-yetkili netsh komutuna bicimsiz/cop deger sokamaz.
+        NOT: gecerli-bicimli ama kotu niyetli bir IP'yi TEK BASINA engellemez
+        (bunun icin yedegin korumali konumda saklanmasi gerekir); bu, cop/enjeksiyon
+        girdisine karsi katmanli bir savunmadir."""
+        import ipaddress
+
+        def _ip(v, want_v6):
+            if not v:
+                return None
+            try:
+                s = str(v).strip()
+                return s if ipaddress.ip_address(s).version == (6 if want_v6 else 4) else None
+            except Exception:
+                return None
+
+        src = snap if isinstance(snap, dict) else {}
+        clean = {}
+        for fam, v6 in (("ipv4", False), ("ipv6", True)):
+            f = src.get(fam) if isinstance(src.get(fam), dict) else {}
+            clean[fam] = {
+                "primary": _ip(f.get("primary"), v6),
+                "secondary": _ip(f.get("secondary"), v6),
+                "dhcp": bool(f.get("dhcp", True)),
+            }
+        return clean
+
     def _restore_dns(self):
         """YALNIZCA bizim degistirdigimiz (yedekteki) adaptorleri orijinal ayarina
         dondurur — statik ise statik, DHCP ise DHCP. Dokunmadigimiz adaptorlere
         (yedekte olmayan) HIC karisilmaz; kullanicinin manuel DNS'i bozulmaz.
         Basarisiz adaptorler yedekte kalir (bir sonraki denemede tekrar denenir);
-        yalnizca basariyla geri yuklenenler yedekten cikarilir."""
+        yalnizca basariyla geri yuklenenler yedekten cikarilir. Config kullanici
+        tarafindan degistirilebildigi icin her yedek netsh'e verilmeden ONCE
+        _sanitize_dns_snapshot ile dogrulanir (bicimsiz/enjekte deger gecmez)."""
         backup = dict(self.cfg.get("dns_backup") or {})
         remaining = dict(backup)
         for name, snap in backup.items():
+            if not isinstance(name, str) or not name.strip():
+                remaining.pop(name, None)   # gecersiz adaptor adi -> at, netsh'e verme
+                continue
+            snap = self._sanitize_dns_snapshot(snap)
             try:
                 ok, msg = restore_dns(name, snap)
             except Exception as e:

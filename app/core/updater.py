@@ -58,20 +58,16 @@ def _request_json(url: str, timeout: int = 10) -> dict:
 
 
 def _pick_setup_asset(assets: list[dict]) -> Optional[dict]:
-    exe_assets = [
+    # Dosya adini SABITLE: yalnizca "DPort-Setup..." adli exe kabul edilir. Boylece
+    # release'e alakasiz/kotu niyetli baska bir exe konsa (veya yanlislikla) updater
+    # onu SECMEZ. Beklenen asset yoksa None (rastgele exe'ye dusmez).
+    named = [
         a for a in assets
-        if str(a.get("name", "")).lower().endswith(".exe")
+        if str(a.get("name", "")).lower().startswith("dport-setup")
+        and str(a.get("name", "")).lower().endswith(".exe")
         and a.get("browser_download_url")
     ]
-    if not exe_assets:
-        return None
-
-    preferred = [
-        a for a in exe_assets
-        if "setup" in str(a.get("name", "")).lower()
-        or "installer" in str(a.get("name", "")).lower()
-    ]
-    return (preferred or exe_assets)[0]
+    return named[0] if named else None
 
 
 def check_latest_release(current_version: str) -> dict:
@@ -95,37 +91,31 @@ def check_latest_release(current_version: str) -> dict:
     }
 
 
-def _digest_matches(path: str, digest: Optional[str]) -> bool:
-    """Indirilen dosyanin SHA256'sini GitHub'in verdigi digest ile karsilastirir.
-
-    digest bicimi: "sha256:<hex>". digest yoksa ya da desteklenmeyen bir
-    algoritmaysa True doner (dogrulama atlanir; eski release'ler bozulmaz).
-    Yalnizca sha256 verilip DE UYUSMAZSA False doner."""
-    if not digest or ":" not in digest:
-        return True
-    algo, _, expected = digest.partition(":")
-    if algo.strip().lower() != "sha256" or not expected.strip():
-        return True
-    expected = expected.strip().lower()
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 256), b""):
-            h.update(chunk)
-    return h.hexdigest() == expected
-
-
 def verify_download(path: str, digest: Optional[str]) -> bool:
-    """Indirilmis dosyayi (varsa) digest'e gore dogrular. Cagiran, dosyayi
-    CALISTIRMADAN HEMEN ONCE bunu yeniden cagirmali: indirme ile calistirma arasinda
-    yerel bir surec dosyayi degistirmis olabilir (TOCTOU); DPort yukseltilmis
-    calistigi icin degistirilmis exe de yuksek yetkiyle calisirdi. Dosya yoksa
-    False; digest yoksa (dogrulanamaz) True (eski davranis korunur)."""
+    """Indirilmis dosyayi SHA256 digest'e gore dogrular.
+
+    GUVENLIK: digest ZORUNLU. GitHub asset'inde gecerli bir 'sha256:<hex>' yoksa,
+    algoritma sha256 degilse veya dosya yoksa dosya DOGRULANAMAZ sayilir ve False
+    doner (kurulmaz/calistirilmaz). Cagiran, dosyayi CALISTIRMADAN HEMEN ONCE de
+    bunu yeniden cagirmali: indirme ile calistirma arasinda yerel bir surec dosyayi
+    degistirmis olabilir (TOCTOU) ve DPort yukseltilmis calistigi icin degistirilmis
+    exe de yuksek yetkiyle calisirdi."""
     try:
         if not os.path.isfile(path):
             return False
+        if not digest or ":" not in digest:
+            return False
+        algo, _, expected = digest.partition(":")
+        if algo.strip().lower() != "sha256" or not expected.strip():
+            return False
+        expected = expected.strip().lower()
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 256), b""):
+                h.update(chunk)
+        return h.hexdigest() == expected
     except Exception:
         return False
-    return _digest_matches(path, digest)
 
 
 def _safe_filename(name: str) -> str:
@@ -154,9 +144,12 @@ def download_update(info: dict, dest_dir: str, timeout: int = 30) -> str:
                 if not chunk:
                     break
                 f.write(chunk)
-        # Dosya butunlugunu dogrula (GitHub digest varsa). Uyusmazsa kurma.
-        if not _digest_matches(tmp_path, info.get("digest")):
-            raise UpdateError("Indirilen dosya dogrulanamadi (SHA256 uyusmadi).")
+        # Dosya butunlugunu dogrula. GUVENLIK: gecerli SHA256 digest ZORUNLU;
+        # yoksa/uyusmazsa dosya SILINIR ve kurulmaz.
+        if not verify_download(tmp_path, info.get("digest")):
+            raise UpdateError(
+                "Guncelleme dogrulanamadi (gecerli SHA256 digest yok veya uyusmadi); "
+                "guvenlik icin indirilmedi.")
         os.replace(tmp_path, final_path)
         return final_path
     except Exception as exc:

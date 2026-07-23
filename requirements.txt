@@ -1,5 +1,7 @@
 # DPort - Python bagimliliklari
 # Kurulum: pip install -r requirements.txt
-customtkinter
-Pillow
-pystray
+# Surumler SABIT: yayinlanan release ile ayni bagimlilik surumleriyle
+# derlenebilsin (tekrarlanabilirlik). Guncellerken bilerek yukselt.
+customtkinter==5.2.2
+Pillow==12.2.0
+pystray==0.19.5
