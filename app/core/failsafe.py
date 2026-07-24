@@ -96,6 +96,24 @@ def remove_logon_failsafe() -> bool:
         return False
 
 
+def sync_logon_failsafe() -> bool:
+    """Failsafe gorevini GUVENLI duruma senkronize eder (yalniz gorev yasam
+    dongusu; DNS/hosts/relay/Discord yollarina DOKUNMAZ):
+
+    - Guvenli konumdaki paketli exe (Program Files): gorevi guncel exe'ye YENIDEN
+      yazar (/F ile ustune). Boylece onceki bir surumden kalmis, YAZILABILIR bir
+      konumu gosteren tehlikeli gorev de guvenli hedefe duzeltilir. ('Gorev var mi'
+      diye bakip erken cikmaz; hedefi her acilista guncel/guvenli tutar.)
+    - Aksi halde (kaynak / portable / yazilabilir konum): kalmis olabilecek gorevi
+      TEMIZLER ve kurmaz (stale/tehlikeli gorev de kaldirilir).
+
+    Doner: gorev (yeniden) kuruldu ise True."""
+    if getattr(sys, "frozen", False) and _exe_in_protected_location():
+        return install_logon_failsafe()   # guncel exe'ye (yeniden) yaz — hedef sabitlenir
+    remove_logon_failsafe()               # guvenli degil -> kalmis gorevi temizle
+    return False
+
+
 def failsafe_installed() -> bool:
     try:
         r = subprocess.run(

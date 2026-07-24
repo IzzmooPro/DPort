@@ -183,20 +183,25 @@ def launch_discord_direct() -> Tuple[bool, str]:
 def get_discord_update_status(
     max_age_seconds: int = 120,
     since_epoch: Optional[float] = None,
-) -> Tuple[str, str]:
+) -> Tuple[str, str, str]:
+    """Doner: (status, msg, stage).
+    status: "ok" | "progress" | "error" | "unknown"
+    msg   : teshis metni (log icin; Turkce sabit).
+    stage : dil-notr asama kodu ("checking"|"downloading"|"installing"|"finishing"|"")
+            — UI bunu kendi dilinde gosterir (bkz. app.py canli durum satiri)."""
     log_path = _discord_updater_log_path()
     if not log_path or not os.path.exists(log_path):
-        return "unknown", "Discord updater logu bulunamadi."
+        return "unknown", "Discord updater logu bulunamadi.", ""
 
     try:
         age = time.time() - os.path.getmtime(log_path)
         if age > max_age_seconds:
-            return "unknown", f"Discord updater logu eski ({int(age)} sn)."
+            return "unknown", f"Discord updater logu eski ({int(age)} sn).", ""
 
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()[-500:]
     except Exception as e:
-        return "unknown", f"Discord updater logu okunamadi: {e}"
+        return "unknown", f"Discord updater logu okunamadi: {e}", ""
 
     latest = None
     saw_current_attempt = False
@@ -208,33 +213,33 @@ def get_discord_update_status(
         if since_epoch is not None and line_epoch is not None and line_epoch < since_epoch - 1:
             continue
         if "Update to latest complete" in line:
-            latest = ("ok", "Discord update kontrolu tamamlandi.")
+            latest = ("ok", "Discord update kontrolu tamamlandi.", "")
         elif "Already up to date" in line:
-            latest = ("progress", "Discord guncel gorunuyor, tamamlanma bekleniyor.")
+            latest = ("progress", "Discord guncel gorunuyor, tamamlanma bekleniyor.", "finishing")
         elif "Starting update to latest" in line or "Requesting manifest" in line:
             saw_current_attempt = True
-            latest = ("progress", "Discord update kontrol ediyor.")
+            latest = ("progress", "Discord update kontrol ediyor.", "checking")
         elif "SetManifests(Running" in line:
             saw_current_attempt = True
-            latest = ("progress", "Discord update manifesti alindi.")
+            latest = ("progress", "Discord update manifesti alindi.", "checking")
         elif "Executing download tasks" in line:
-            latest = ("progress", "Discord update indiriyor.")
+            latest = ("progress", "Discord update indiriyor.", "downloading")
         elif "Host to be installed" in line:
-            latest = ("progress", "Discord ana guncelleme paketi bulundu.")
+            latest = ("progress", "Discord ana guncelleme paketi bulundu.", "downloading")
         elif "Requesting installation of module" in line:
-            latest = ("progress", "Discord modulleri yukleniyor.")
+            latest = ("progress", "Discord modulleri yukleniyor.", "installing")
         elif "Install of module" in line and "finished successfully" in line:
-            latest = ("progress", "Discord modulleri yukleniyor.")
+            latest = ("progress", "Discord modulleri yukleniyor.", "installing")
         elif "ERROR [updater_client]" in line:
-            latest = ("error", _compact_log_line(line))
+            latest = ("error", _compact_log_line(line), "")
         elif "Failed " in line and "Failed to remove Windows arch transition flag" not in line:
-            latest = ("error", _compact_log_line(line))
+            latest = ("error", _compact_log_line(line), "")
 
     if latest:
         return latest
     if saw_current_attempt:
-        return "progress", "Discord update kontrol ediyor."
-    return "unknown", "Discord updater sonucu henuz net degil."
+        return "progress", "Discord update kontrol ediyor.", "checking"
+    return "unknown", "Discord updater sonucu henuz net degil.", ""
 
 
 def _discord_updater_log_path() -> Optional[str]:

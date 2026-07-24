@@ -29,8 +29,9 @@ TR = {
     "servers_all":      "update·API·gateway·CDN",
 
     # Hero (bağlantı kartı)
-    "hero_on":          "Bağlantı Açık",
+    "hero_on":          "Bağlandı",
     "hero_off":         "Bağlantı Kapalı",
+    "hero_connecting":  "Bağlanıyor…",
     "hero_hint":        "Açmak için “Discord'u Aç”a bas",
     "hero_sub_on":      "Engel aşma yolu etkin",
 
@@ -45,6 +46,10 @@ TR = {
     "st_path_prep":     "Bağlantı yolu hazırlanıyor...",
     "st_updating":      "Discord güncelleniyor / açılıyor...",
     "st_update_started":"Güncelleme/açılış başladı",
+    "st_upd_checking":   "Discord güncelleme kontrol ediliyor…",
+    "st_upd_downloading":"Discord güncellemesi indiriliyor…",
+    "st_upd_installing": "Discord modülleri yükleniyor…",
+    "st_upd_finishing":  "Güncelleme tamamlanıyor…",
     "st_opening_fast":  "Discord hızlı açılıyor...",
     "st_opened":        "Discord açıldı ✓",
     "st_restoring":     "Normale dönülüyor...",
@@ -166,6 +171,7 @@ EN = {
 
     "hero_on":          "Connected",
     "hero_off":         "Disconnected",
+    "hero_connecting":  "Connecting…",
     "hero_hint":        "Press “Open Discord” to start",
     "hero_sub_on":      "Bypass path active",
 
@@ -178,6 +184,10 @@ EN = {
     "st_path_prep":     "Preparing connection path...",
     "st_updating":      "Updating / opening Discord...",
     "st_update_started":"Update/launch started",
+    "st_upd_checking":   "Checking Discord for updates…",
+    "st_upd_downloading":"Downloading Discord update…",
+    "st_upd_installing": "Installing Discord modules…",
+    "st_upd_finishing":  "Finishing update…",
     "st_opening_fast":  "Opening Discord (fast)...",
     "st_opened":        "Discord opened ✓",
     "st_restoring":     "Restoring normal...",

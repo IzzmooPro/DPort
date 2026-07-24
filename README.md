@@ -5,7 +5,7 @@
 **Discord'u Türkiye'de takılmadan, hızlı ve güncel şekilde açan küçük bir yardımcı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.5-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.6-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 </div>

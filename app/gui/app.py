@@ -38,7 +38,7 @@ from core.discord_unblock import (
     last_hosts_winerror,
     last_hosts_retry_info,
 )
-from core.failsafe import install_logon_failsafe, failsafe_installed
+from core.failsafe import sync_logon_failsafe
 from core.log_manager import LogManager
 from core.startup_manager import enable_startup, disable_startup, is_startup_enabled
 from core.lang import L, set_lang, current_lang
@@ -325,6 +325,7 @@ class DPortApp(ctk.CTk):
             enabled=self.cfg.get("log_enabled", True),
         )
         self._busy = False
+        self._connecting = False    # "Discord'u Ac" akisi sirasinda hero "Baglaniyor..." kalir
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
         self._status_timer_id = None  # tek periyodik pano zinciri (after id)
         self._status_refreshing = False  # ayni anda tek yenileme thread'i
@@ -363,7 +364,7 @@ class DPortApp(ctk.CTk):
         self.configure(fg_color=BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.W, self.H = 360, 522
+        self.W, self.H = 348, 522
         w, h = self.W, self.H
         self.update_idletasks()
         x = (self.winfo_screenwidth() - w) // 2
@@ -599,14 +600,14 @@ class DPortApp(ctk.CTk):
 
         # 2) Govde
         body = ctk.CTkFrame(self, fg_color=BG)
-        body.pack(fill="both", expand=True, padx=12, pady=(12, 10))
+        body.pack(fill="both", expand=True, padx=12, pady=(9, 8))
 
         # HERO — buyuk baglanti durum karti (canli durum noktasi + ping gostergesi)
         self.hero = ctk.CTkFrame(body, fg_color=CARD, corner_radius=16,
                                  border_width=1, border_color=BORDER)
-        self.hero.pack(fill="x", pady=(0, 9))
+        self.hero.pack(fill="x", pady=(0, 7))
         h = ctk.CTkFrame(self.hero, fg_color="transparent")
-        h.pack(fill="x", padx=17, pady=12)
+        h.pack(fill="x", padx=17, pady=10)
         h.grid_columnconfigure(1, weight=1)
 
         # Alt aciklama satirlari kaldirildi (istek): yalnizca durum baslgi + nokta
@@ -637,33 +638,36 @@ class DPortApp(ctk.CTk):
         ]
         for row, col, key, icon, label in cells:
             cell = ctk.CTkFrame(grid, fg_color=CARD, corner_radius=12,
-                                border_width=1, border_color=BORDER_STRONG, height=72)
+                                border_width=1, border_color=BORDER_STRONG, height=68)
             cell.grid(row=row, column=col, sticky="nsew",
                       padx=(0, 4) if col == 0 else (4, 0),
                       pady=(0, 4) if row == 0 else (4, 0))
             cell.pack_propagate(False)   # tum kartlar esit yukseklikte kalir
+            # Icerik kart icinde yatay+dikey ORTALI (expand'li ic cerceve).
+            inner = ctk.CTkFrame(cell, fg_color="transparent")
+            inner.pack(expand=True, padx=10)
             ctk.CTkLabel(
-                cell, image=self._ico(icon, MUTED, 18), text=f"  {label}",
-                compound="left", font=_f(10), text_color=MUTED, anchor="w",
-            ).pack(fill="x", padx=11, pady=(8, 0), anchor="w")
+                inner, image=self._ico(icon, MUTED, 18), text=f"  {label}",
+                compound="left", font=_f(10), text_color=MUTED, anchor="center",
+            ).pack(anchor="center")
             # Deger: uzun metin (or. Acilan Sunucular degeri) dar kartta 2 satira
             # sarar; metin degismez, kirpma olmaz. 'servers' biraz kucuk font.
             val = ctk.CTkLabel(
-                cell, text=L["val_none"],
+                inner, text=L["val_none"],
                 font=_f(11, "bold") if key == "servers" else _f(13, "bold"),
-                text_color=TEXT, anchor="w", justify="left",
+                text_color=TEXT, anchor="center", justify="center",
                 # servers: kompakt metin tek satira sigsin (sarma esigi genis);
                 # digerleri: uzun deger (or. 'Discord kurulu degil') 2 satira sarabilsin.
-                wraplength=150 if key == "servers" else 126,
+                wraplength=145 if key == "servers" else 122,
             )
-            val.pack(fill="x", padx=11, pady=(1, 6), anchor="w")
+            val.pack(anchor="center", pady=(2, 0))
             self.dash[key] = val
 
         # Butonlar — YAN YANA (tek satir). Ana buton (Discord'u Ac) daha genis
         # (3:2), accent + play ikonu; ikincil (Normale Don) ghost.
         BTN_H = 42
         btnrow = ctk.CTkFrame(body, fg_color="transparent")
-        btnrow.pack(fill="x", pady=(12, 0))
+        btnrow.pack(fill="x", pady=(9, 0))
         btnrow.grid_columnconfigure(0, weight=1, uniform="b")
         btnrow.grid_columnconfigure(1, weight=1, uniform="b")
 
@@ -691,7 +695,7 @@ class DPortApp(ctk.CTk):
         # Ikonlar — fill YOK; frame icerige gore kuculup yatayda ortalanir.
         # Daha belirgin: buyuk kutu + parlak (TEXT) ikon + kalin cizgi (px=20).
         iconrow = ctk.CTkFrame(bot, fg_color="transparent")
-        iconrow.pack(pady=(10, 0))
+        iconrow.pack(pady=(8, 0))
         for kind, cmd in (("gear", self._open_settings),
                           ("help", self._open_help),
                           ("info", self._open_about)):
@@ -704,7 +708,7 @@ class DPortApp(ctk.CTk):
 
         # Durum — ortali (uzun mesaj sigacak kadar genis; kirpilmaz cunku pencere fit).
         statusrow = ctk.CTkFrame(bot, fg_color="transparent")
-        statusrow.pack(fill="x", pady=(9, 0))
+        statusrow.pack(fill="x", pady=(7, 0))
         inner = ctk.CTkFrame(statusrow, fg_color="transparent")
         inner.pack(anchor="center")
         self.status_dot = ctk.CTkLabel(inner, text="●", font=_f(13), text_color=MUTED)
@@ -909,24 +913,25 @@ class DPortApp(ctk.CTk):
     def _apply_status(self, active, ver_txt, dns_txt, ping_txt, ver=None, ping_ms=None):
         if not self.dash:
             return
-        # HERO — canli baglanti durumu + ping
-        if active:
-            self.hero_dot.configure(text_color=GREEN)
-            self.hero_state.configure(text=L["hero_on"], text_color=TEXT)
-            # ms hazirsa buyuk sayi; henuz olculuyorsa kucuk+soluk (21px'te "olculuyor..."
-            # kocaman ve gereksiz duruyordu).
-            if ping_ms:
-                self.hero_ping.configure(text=ping_txt, font=_f(21, "bold"),
-                                         text_color=self._ping_color(ping_ms))
+        # HERO — canli baglanti durumu + ping. Baglanma akisi sirasinda hero
+        # "Baglaniyor..." halinde kalir; periyodik refresh onu EZMESIN.
+        if not self._connecting:
+            if active:
+                self.hero_dot.configure(text_color=GREEN)
+                self.hero_state.configure(text=L["hero_on"], text_color=TEXT)
+                # ms hazirsa buyuk sayi; henuz olculuyorsa kucuk+soluk.
+                if ping_ms:
+                    self.hero_ping.configure(text=ping_txt, font=_f(21, "bold"),
+                                             text_color=self._ping_color(ping_ms))
+                else:
+                    self.hero_ping.configure(text=ping_txt, font=_f(11),
+                                             text_color=MUTED)
+                self.hero.configure(border_color=GREEN, border_width=2)
             else:
-                self.hero_ping.configure(text=ping_txt, font=_f(11),
-                                         text_color=MUTED)
-            self.hero.configure(border_color=GREEN, border_width=2)   # aktifken daha kalin cerceve
-        else:
-            self.hero_dot.configure(text_color=MUTED)
-            self.hero_state.configure(text=L["hero_off"], text_color=SUB)
-            self.hero_ping.configure(text="—", font=_f(21, "bold"), text_color=MUTED)
-            self.hero.configure(border_color=BORDER, border_width=1)
+                self.hero_dot.configure(text_color=MUTED)
+                self.hero_state.configure(text=L["hero_off"], text_color=SUB)
+                self.hero_ping.configure(text="—", font=_f(21, "bold"), text_color=MUTED)
+                self.hero.configure(border_color=BORDER, border_width=1)
 
         self.dash["version"].configure(
             text=ver_txt, text_color=TEXT if ver else MUTED)
@@ -992,8 +997,22 @@ class DPortApp(ctk.CTk):
         if self._busy:
             return
         self._busy = True
+        self._connecting = True          # hero "Baglaniyor..." goster (periyodik refresh ezmesin)
+        self._set_hero_connecting()
         self.btn_open.configure(state="disabled", text=L["btn_opening"])
         threading.Thread(target=self._open_discord_w, daemon=True).start()
+
+    def _set_hero_connecting(self):
+        """Acilis akisi basinda buyuk baglanti kartini 'Baglaniyor...' (sari) yapar;
+        boylece odak karti da alt durum satiriyla uyumlu, canli gorunur. Ana
+        thread'den cagrilir."""
+        try:
+            self.hero_dot.configure(text_color=YELL)
+            self.hero_state.configure(text=L["hero_connecting"], text_color=TEXT)
+            self.hero_ping.configure(text="—", font=_f(21, "bold"), text_color=MUTED)
+            self.hero.configure(border_color=YELL, border_width=2)
+        except Exception:
+            pass
 
     def _open_discord_w(self):
         try:
@@ -1079,6 +1098,7 @@ class DPortApp(ctk.CTk):
                 self._st(L["st_opened"], GREEN)
         finally:
             self._busy = False
+            self._connecting = False   # artik gercek durum uygulanabilir (hero cozulur)
             self.after(0, lambda: self.btn_open.configure(state="normal", text=L["btn_open"]))
             self.after(0, self._refresh_status_async)
 
@@ -1234,23 +1254,32 @@ class DPortApp(ctk.CTk):
             pass
 
     def _discord_should_use_updater(self) -> bool:
-        last_ok = self.cfg.get("discord_last_update_ok_at")
-        try:
-            last_ok = float(last_ok)
-        except (TypeError, ValueError):
-            return True
-        return (time.time() - last_ok) > (6 * 60 * 60)
+        # HER acilista Discord'un kendi guncelleyicisi (Update.exe) calissin: Discord
+        # daima guncel kalir, hicbir acilista guncelleme atlanmaz. Bedeli: Discord
+        # zaten guncelken acilis ~1-3 sn daha yavas (updater once kontrol eder), ama
+        # acilis yine garanti (kontrol basarisiz olsa bile mevcut surum acilir).
+        # Eski 6 saatlik hizli-acilis onbellegi kaldirildi (kullanici tercihi).
+        return True
+
+    # Discord updater asama kodu -> gorunur durum satiri (dile gore) metni.
+    _UPD_STAGE_KEYS = {
+        "checking": "st_upd_checking",
+        "downloading": "st_upd_downloading",
+        "installing": "st_upd_installing",
+        "finishing": "st_upd_finishing",
+    }
 
     def _discord_update_result_w(self, started_at: float):
         deadline = time.time() + 90
         last_error = None
         last_message = None
+        last_stage = None
 
         while self._alive and time.time() < deadline:
             time.sleep(5)
             if not self._alive:   # kapandiysa erken cik (config/Tk'ye dokunma)
                 return
-            status, msg = get_discord_update_status(max_age_seconds=120, since_epoch=started_at)
+            status, msg, stage = get_discord_update_status(max_age_seconds=120, since_epoch=started_at)
             if status == "ok":
                 self.log_mgr.console(f"Updater sonucu: {msg}", level="INFO")
                 self.cfg.set("discord_last_update_ok_at", time.time())
@@ -1258,9 +1287,16 @@ class DPortApp(ctk.CTk):
                 return
             if status == "error":
                 last_error = msg
-            elif status == "progress" and msg != last_message:
-                last_message = msg
-                self.log_mgr.console(f"Updater: {msg}", level="INFO")
+            elif status == "progress":
+                # Canli ilerleme: asama degistiyse gorunur alt satira da yansit
+                # (kullanici gecikmeyi 'calisiyor' diye anlar, donmus sanmaz).
+                key = self._UPD_STAGE_KEYS.get(stage)
+                if key and stage != last_stage:
+                    last_stage = stage
+                    self._st(L[key], YELL)
+                if msg != last_message:
+                    last_message = msg
+                    self.log_mgr.console(f"Updater: {msg}", level="INFO")
 
         if last_error:
             self.log_mgr.console(f"Updater sonucu: {last_error}", level="ERROR")
@@ -1344,12 +1380,13 @@ class DPortApp(ctk.CTk):
         self.cfg.set("dns_backup", remaining or None)
 
     def _ensure_failsafe(self):
-        """Logon hosts-temizleyici gorevini kurar (sessiz guvenlik agi). Gorev
-        adi degistiyse eskiyi silip yeniyi kurar (failsafe_installed adla sorgular)."""
+        """Logon hosts-temizleyici gorevini GUVENLI duruma senkronize eder: guvenli
+        konumdaysak (Program Files) gorevi guncel exe'ye yeniden yazar (onceki
+        surumden kalmis, yazilabilir konumu gosteren stale/tehlikeli gorev de
+        duzeltilir); degilsek kalmis gorevi temizler. Yalniz gorev yasam dongusu —
+        DNS/hosts/relay/Discord yollarina dokunmaz."""
         try:
-            if failsafe_installed():
-                return
-            if install_logon_failsafe():
+            if sync_logon_failsafe():
                 self.log_mgr.console("failsafe: logon hosts-temizleyici gorevi hazir")
         except Exception:
             pass
@@ -1615,16 +1652,16 @@ class _AboutWindow(ctk.CTkToplevel):
         self.configure(fg_color=BG)
         _apply_win_icon(self)
         self._build()
-        # Yuksekligi icerige gore ayarla (alttaki aciklama metni kesilmesin;
-        # ozellikle Turkce metin daha uzun). UST kenar hizali ve sabit.
+        # Yuksekligi TAM icerige gore ayarla (sabit 306 alt sinir gereksiz bosluk
+        # birakiyordu). UST kenar hizali ve sabit.
         self.update_idletasks()
-        h = max(306, self.winfo_reqheight() + 6)
+        h = self.winfo_reqheight() + 6
         self.transient(app)
-        _dock_window(app, self, 322, h, align_top=True)
+        _dock_window(app, self, 300, h, align_top=True)
 
     def _build(self):
         pad = ctk.CTkFrame(self, fg_color=BG)
-        pad.pack(fill="both", expand=True, padx=20, pady=18)
+        pad.pack(fill="both", expand=True, padx=20, pady=14)
 
         # Logo + isim + surum
         top = ctk.CTkFrame(pad, fg_color="transparent")
@@ -1634,16 +1671,16 @@ class _AboutWindow(ctk.CTkToplevel):
             ic = resource_path("assets", "icon.ico")
             if os.path.exists(ic):
                 im = Image.open(ic).convert("RGBA")
-                self._img = ctk.CTkImage(light_image=im, dark_image=im, size=(48, 48))
+                self._img = ctk.CTkImage(light_image=im, dark_image=im, size=(42, 42))
                 ctk.CTkLabel(top, image=self._img, text="").pack(side="left")
         except Exception:
             pass
         namebox = ctk.CTkFrame(top, fg_color="transparent")
         namebox.pack(side="left", padx=12, fill="y")
-        ctk.CTkLabel(namebox, text=APP_NAME, font=_f(19, "bold"),
+        ctk.CTkLabel(namebox, text=APP_NAME, font=_f(18, "bold"),
                      text_color=TEXT, anchor="w").pack(anchor="w", expand=True)
 
-        ctk.CTkFrame(pad, height=1, fg_color=BORDER).pack(fill="x", pady=10)
+        ctk.CTkFrame(pad, height=1, fg_color=BORDER).pack(fill="x", pady=8)
 
         # Bilgi karti — Surum / Gelistirici / E-posta
         info = ctk.CTkFrame(pad, fg_color=CARD, corner_radius=12,
@@ -1651,24 +1688,24 @@ class _AboutWindow(ctk.CTkToplevel):
         info.pack(fill="x")
         info.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(info, text=L["about_version"], font=_f(12), text_color=MUTED,
-                     anchor="w").grid(row=0, column=0, sticky="w", padx=(14, 10), pady=(11, 4))
+                     anchor="w").grid(row=0, column=0, sticky="w", padx=(14, 10), pady=(9, 4))
         ctk.CTkLabel(info, text=f"v{self.app.VERSION}", font=_f(12, "bold"), text_color=TEXT,
-                     anchor="e").grid(row=0, column=1, sticky="e", padx=(0, 14), pady=(11, 4))
+                     anchor="e").grid(row=0, column=1, sticky="e", padx=(0, 14), pady=(9, 4))
         ctk.CTkLabel(info, text=L["about_dev"], font=_f(12), text_color=MUTED,
                      anchor="w").grid(row=1, column=0, sticky="w", padx=(14, 10), pady=4)
         ctk.CTkLabel(info, text=L["about_dev_name"], font=_f(12, "bold"), text_color=TEXT,
                      anchor="e").grid(row=1, column=1, sticky="e", padx=(0, 14), pady=4)
         ctk.CTkLabel(info, text=L["about_email"], font=_f(12), text_color=MUTED,
-                     anchor="w").grid(row=2, column=0, sticky="w", padx=(14, 10), pady=(4, 11))
+                     anchor="w").grid(row=2, column=0, sticky="w", padx=(14, 10), pady=(4, 9))
         mail = ctk.CTkLabel(info, text=L["about_email_addr"],
                             font=ctk.CTkFont(FONT, 12, underline=True),
                             text_color=BLURPLE_L, anchor="e", cursor="hand2")
-        mail.grid(row=2, column=1, sticky="e", padx=(0, 14), pady=(4, 11))
+        mail.grid(row=2, column=1, sticky="e", padx=(0, 14), pady=(4, 9))
         mail.bind("<Button-1>", lambda e: self._mail())
 
         # Kisa amac (en alt)
         ctk.CTkLabel(pad, text=L["about_purpose"], font=_f(11), text_color=SUB,
-                     anchor="w", justify="left", wraplength=282).pack(anchor="w", pady=(12, 0))
+                     anchor="w", justify="left", wraplength=260).pack(anchor="w", pady=(9, 0))
 
     def _mail(self):
         try:
@@ -1691,7 +1728,10 @@ class _CloseDialog(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         _apply_win_icon(self)
         self._build()
-        w, h = 344, 212
+        # Yukseklik icerige gore (sabit 212 altta gereksiz bosluk birakiyordu).
+        w = 340
+        self.update_idletasks()
+        h = self.winfo_reqheight() + 4
         app.update_idletasks()
         x = app.winfo_x() + (app.winfo_width() - w) // 2
         y = app.winfo_y() + (app.winfo_height() - h) // 3
@@ -1702,24 +1742,24 @@ class _CloseDialog(ctk.CTkToplevel):
 
     def _build(self):
         pad = ctk.CTkFrame(self, fg_color=BG)
-        pad.pack(fill="both", expand=True, padx=18, pady=16)
+        pad.pack(fill="both", expand=True, padx=18, pady=14)
         ctk.CTkLabel(pad, text=L["close_title"], font=_f(15, "bold"),
                      text_color=TEXT, anchor="w").pack(anchor="w")
         ctk.CTkLabel(pad, text=L["close_msg"], font=_f(11), text_color=SUB,
-                     anchor="w", justify="left", wraplength=304).pack(anchor="w", pady=(6, 12))
+                     anchor="w", justify="left", wraplength=304).pack(anchor="w", pady=(5, 10))
         self._rem = ctk.CTkCheckBox(
             pad, text=L["close_remember"], font=_f(10), text_color=MUTED,
             checkbox_width=18, checkbox_height=18, corner_radius=5,
             fg_color=BLURPLE, hover_color=BLURPLE_H, border_color=BORDER, border_width=2)
-        self._rem.pack(anchor="w", pady=(0, 14))
+        self._rem.pack(anchor="w", pady=(0, 12))
         row = ctk.CTkFrame(pad, fg_color="transparent")
-        row.pack(fill="x", side="bottom")
+        row.pack(fill="x")
         row.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkButton(row, text=L["close_quit"], height=40, corner_radius=10,
+        ctk.CTkButton(row, text=L["close_quit"], height=38, corner_radius=10,
                       fg_color="transparent", hover_color=HOVER, text_color=SUB,
                       border_width=1, border_color=BORDER, font=_f(12),
                       command=lambda: self._choose("quit")).grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        ctk.CTkButton(row, text=L["close_tray"], height=40, corner_radius=10,
+        ctk.CTkButton(row, text=L["close_tray"], height=38, corner_radius=10,
                       fg_color=BLURPLE, hover_color=BLURPLE_H, text_color=WHITE,
                       font=_f(12, "bold"),
                       command=lambda: self._choose("tray")).grid(row=0, column=1, sticky="ew", padx=(5, 0))
