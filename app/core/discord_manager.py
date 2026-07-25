@@ -1,12 +1,22 @@
 """
 core/discord_manager.py
 Discord kurulumunu bulur ve Discord'un kendi updater yolu ile acilmasini saglar.
+
+GUVENLIK (F1): Discord.exe ve Update.exe `%LOCALAPPDATA%` altinda, yani standart
+kullanicinin YAZABILDIGI bir konumdadir. DPort yukseltilmis calistigi icin bu
+ikilileri subprocess.Popen ile baslatmak, onlara DPort'un Administrator tokenini
+MIRAS BIRAKIRDI (UAC istemi de cikmadan). Bu yuzden baslatma artik yalnizca
+`core.user_launch.launch_as_user` uzerinden, masaustu oturumunun YUKSELTILMEMIS
+kullanici tokeni ile yapilir. Token yolu basarisiz olursa yuksek yetkili Popen'a
+GERI DUSULMEZ; hata dondurulur.
 """
 import os
 import subprocess
 import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple
+
+from core.user_launch import launch_as_user
 
 
 DISCORD_ROOT_NAMES = ("Discord", "DiscordCanary", "DiscordPTB")
@@ -134,32 +144,24 @@ def launch_discord(use_updater: bool = True, ensure_closed: bool = True) -> Tupl
             if ensure_closed:
                 close_discord_processes()
                 time.sleep(1)
-            subprocess.Popen(
-                [update_exe, "--processStart", "Discord.exe"],
-                cwd=os.path.dirname(update_exe),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            return True, f"Update.exe ile baslatildi | {update_exe}"
         except Exception as e:
             return False, str(e)
+        ok, err = launch_as_user(
+            [update_exe, "--processStart", "Discord.exe"],
+            cwd=os.path.dirname(update_exe),
+        )
+        if ok:
+            return True, f"Update.exe ile baslatildi | {update_exe}"
+        return False, err
 
     discord_exe = find_discord_exe()
     if not discord_exe:
         return False, "Discord.exe veya Update.exe bulunamadi."
 
-    try:
-        subprocess.Popen(
-            [discord_exe],
-            cwd=os.path.dirname(discord_exe),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
+    ok, err = launch_as_user([discord_exe], cwd=os.path.dirname(discord_exe))
+    if ok:
         return True, f"Discord.exe dogrudan baslatildi | {discord_exe}"
-    except Exception as e:
-        return False, str(e)
+    return False, err
 
 
 def launch_discord_direct() -> Tuple[bool, str]:
@@ -167,17 +169,10 @@ def launch_discord_direct() -> Tuple[bool, str]:
     if not discord_exe:
         return False, "Discord.exe bulunamadi."
 
-    try:
-        subprocess.Popen(
-            [discord_exe],
-            cwd=os.path.dirname(discord_exe),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
+    ok, err = launch_as_user([discord_exe], cwd=os.path.dirname(discord_exe))
+    if ok:
         return True, f"Discord.exe dogrudan baslatildi | {discord_exe}"
-    except Exception as e:
-        return False, str(e)
+    return False, err
 
 
 def get_discord_update_status(

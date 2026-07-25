@@ -74,6 +74,25 @@ if __name__ == "__main__":
             pass
         sys.exit(0)
 
+    # BAKIM MODU: kurulum/güncelleme sonrası installer bu bayrakla çağırır.
+    # YALNIZCA failsafe görev senkronizasyonu yapar: arayüz AÇMAZ, DNS'e ve
+    # hosts'a DOKUNMAZ, tek örnek kilidi almaz. Amaç, kullanıcı yeni sürümü hiç
+    # çalıştırmasa bile eski sürümden kalmış güvensiz DPortHostsFailsafe
+    # görevinin ayakta kalmamasıdır.
+    #
+    # Çıkış kodları (installer bunlara bakar):
+    #   0 = görev doğrulanmış hedefle kuruldu
+    #   2 = güvenli hedef yok, ama eski görevler temiz (güvenlik sorunu YOK)
+    #   3 = BAŞARISIZ: eski görev kaldırılamadı veya beklenmeyen hata
+    if "--sync-failsafe" in sys.argv:
+        code = 3
+        try:
+            from core.failsafe import sync_logon_failsafe, last_failsafe_error
+            code = 0 if sync_logon_failsafe() else (3 if last_failsafe_error() else 2)
+        except Exception:
+            code = 3
+        sys.exit(code)
+
     # 1) UAC'siz ön-kontrol: uygulama zaten açıksa onu öne getir ve çık.
     if signal_existing():
         sys.exit(0)

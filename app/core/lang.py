@@ -75,6 +75,9 @@ TR = {
     # Normale dön onayı
     "dlg_restore_t":    "Normale Dön",
     "dlg_restore_msg":  "Engel aşma yolu kapatılsın ve sistem DNS'i otomatiğe (DHCP) dönsün mü?\n\nNot: Discord açıksa bağlantısı kesilebilir.",
+    "dlg_legacy_dns_t":   "Eski DNS Yedeği",
+    "dlg_legacy_dns_msg": "Önceki bir DPort sürümünden kalan DNS yedeği bulundu:\n\n{details}\n\nBu yedek, standart kullanıcı tarafından değiştirilebilen bir dosyada tutuluyordu; DPort doğruluğunu garanti edemez. Bu yüzden otomatik uygulanmadı.\n\nDeğerler sana doğru görünüyorsa sistem DNS'i bunlara döndürülsün mü?\n\nEmin değilsen “Hayır” seç — DNS'e dokunulmaz ve yedek silinir.",
+    "legacy_dns_dhcp":    "Otomatik (DHCP)",
 
     # Log penceresi
     "log_title":        "İşlem Logu",
@@ -115,6 +118,7 @@ TR = {
     "update_downloaded":"Güncelleme indirildi.\n\nKurulumu başlatmak ve DPort'u kapatmak ister misin?",
     "update_failed":    "Güncelleme kontrolü tamamlanamadı.",
     "update_verify_failed": "İndirilen güncelleme doğrulanamadı; güvenlik için çalıştırılmadı.",
+    "update_staging_failed": "Güncelleme için korumalı indirme klasörü hazırlanamadı.\n\nGüvenlik gereği güncelleme, standart kullanıcının değiştirebileceği bir klasöre indirilmez. Kurulumu GitHub Releases sayfasından elle yapabilirsin.",
     "st_update_checking":"Güncelleme kontrol ediliyor...",
     "st_update_downloading":"Güncelleme indiriliyor...",
 
@@ -211,6 +215,9 @@ EN = {
 
     "dlg_restore_t":    "Restore Normal",
     "dlg_restore_msg":  "Close the bypass path and set system DNS back to automatic (DHCP)?\n\nNote: If Discord is open its connection may drop.",
+    "dlg_legacy_dns_t":   "Legacy DNS Backup",
+    "dlg_legacy_dns_msg": "A DNS backup left over from an earlier DPort version was found:\n\n{details}\n\nThat backup was kept in a file a standard user can modify, so DPort cannot vouch for it. It was therefore not applied automatically.\n\nIf these values look right to you, restore system DNS to them?\n\nIf you are unsure choose “No” — DNS is left untouched and the backup is discarded.",
+    "legacy_dns_dhcp":    "Automatic (DHCP)",
 
     "log_title":        "Activity Log",
     "log_clear":        "Clear",
@@ -246,6 +253,7 @@ EN = {
     "update_downloaded":"The update was downloaded.\n\nStart setup and close DPort?",
     "update_failed":    "Update check could not be completed.",
     "update_verify_failed": "The downloaded update could not be verified; it was not run for safety.",
+    "update_staging_failed": "A protected download folder for the update could not be prepared.\n\nFor safety the update is never downloaded into a folder a standard user can modify. You can install it manually from the GitHub Releases page.",
     "st_update_checking":"Checking for updates...",
     "st_update_downloading":"Downloading update...",
 

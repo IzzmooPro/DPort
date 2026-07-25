@@ -9,11 +9,13 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Optional, Tuple
 
 from core.app_info import APP_NAME, GITHUB_LATEST_API_URL, GITHUB_REPO
+from core.secure_store import GuardedFile
 
 
 class UpdateError(RuntimeError):
@@ -91,24 +93,35 @@ def check_latest_release(current_version: str) -> dict:
     }
 
 
-def verify_download(path: str, digest: Optional[str]) -> bool:
-    """Indirilmis dosyayi SHA256 digest'e gore dogrular.
+def expected_sha256(digest: Optional[str]) -> Optional[str]:
+    """GitHub asset digest'inden ('sha256:<hex>') beklenen hex ozeti cikarir.
 
-    GUVENLIK: digest ZORUNLU. GitHub asset'inde gecerli bir 'sha256:<hex>' yoksa,
-    algoritma sha256 degilse veya dosya yoksa dosya DOGRULANAMAZ sayilir ve False
-    doner (kurulmaz/calistirilmaz). Cagiran, dosyayi CALISTIRMADAN HEMEN ONCE de
-    bunu yeniden cagirmali: indirme ile calistirma arasinda yerel bir surec dosyayi
-    degistirmis olabilir (TOCTOU) ve DPort yukseltilmis calistigi icin degistirilmis
-    exe de yuksek yetkiyle calisirdi."""
+    GUVENLIK: digest ZORUNLU. Deger yoksa, bicimi bozuksa veya algoritma sha256
+    degilse None doner ve cagiran taraf dosyayi DOGRULANAMAZ sayar."""
+    if not digest or ":" not in digest:
+        return None
+    algo, _, expected = digest.partition(":")
+    if algo.strip().lower() != "sha256":
+        return None
+    expected = expected.strip().lower()
+    if not expected or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return None
+    return expected
+
+
+def verify_download(path: str, digest: Optional[str]) -> bool:
+    """Indirilmis dosyayi SHA256 digest'e gore dogrular (indirme sonrasi kontrol).
+
+    Calistirma ONCESI dogrulama icin bu fonksiyon TEK BASINA yeterli DEGILDIR:
+    dosyayi acar, okur, kapatir; donusuyle CreateProcess arasinda yerel bir surec
+    dosyayi degistirebilir (TOCTOU) ve DPort yukseltilmis calistigi icin
+    degistirilmis exe de yuksek yetkiyle calisirdi. Calistirma yolu icin
+    `launch_verified()` kullanilir: o, hash'i KILITLI HANDLE uzerinden hesaplar ve
+    handle acikken sureci baslatir."""
     try:
-        if not os.path.isfile(path):
+        expected = expected_sha256(digest)
+        if not expected or not os.path.isfile(path):
             return False
-        if not digest or ":" not in digest:
-            return False
-        algo, _, expected = digest.partition(":")
-        if algo.strip().lower() != "sha256" or not expected.strip():
-            return False
-        expected = expected.strip().lower()
         h = hashlib.sha256()
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(1024 * 256), b""):
@@ -118,15 +131,93 @@ def verify_download(path: str, digest: Optional[str]) -> bool:
         return False
 
 
+def launch_verified(path: str, digest: Optional[str]) -> Tuple[bool, str]:
+    """Installer'i, DOGRULANAN BAYTLARIN TA KENDISI calisacak sekilde baslatir.
+
+    Akis:
+      1. Dosya FILE_SHARE_READ ile acilir. Handle acik oldugu surece baska bir
+         surec dosyayi yazamaz, silemez, yeniden adlandiramaz.
+      2. SHA-256 bu HANDLE uzerinden hesaplanir (yol yeniden acilmaz).
+      3. Hash uyusursa, handle HALA ACIKKEN CreateProcess yapilir. CreateProcess
+         imaji okuma+calistirma icin acar; bu, FILE_SHARE_READ ile uyumludur.
+      4. Handle kapatilir. Bu noktada imaj zaten dogrulanmis baytlardan
+         eslenmistir.
+
+    Boylece dogrulama ile calistirma arasinda dosya degistirme PENCERESI KALMAZ.
+    Donus: (basarili_mi, hata_metni). Dogrulama basarisizsa surec BASLATILMAZ."""
+    expected = expected_sha256(digest)
+    if not expected:
+        return False, "gecerli SHA256 digest yok"
+    if not os.path.isfile(path):
+        return False, "indirilen dosya bulunamadi"
+
+    guard = GuardedFile(path)
+    if not guard.open():
+        return False, "indirilen dosya guvenli sekilde kilitlenemedi"
+    try:
+        actual = guard.sha256_hex()
+        if actual is None:
+            return False, "indirilen dosya okunamadi"
+        if actual != expected:
+            return False, "SHA256 uyusmadi"
+        try:
+            subprocess.Popen([path], close_fds=True)
+        except Exception as exc:
+            return False, str(exc)
+        return True, ""
+    finally:
+        guard.close()
+
+
+def purge_setup_dir(directory: str, keep: Optional[str] = None) -> int:
+    """Indirilmis eski setup dosyalarini temizler.
+
+    GUVENLIK: birikmis installer'lar, ozellikle kullanici-yazilabilir eski
+    `%APPDATA%\\DPort\\updates` konumunda, saldirganin onceden hazirlayabilecegi
+    ikili yigini olusturur. Yalnizca DPort'un kendi urettigi ad kalibi silinir
+    (`DPort-Setup*.exe`, `*.download`); baska hicbir dosyaya dokunulmaz.
+    Donus: silinen dosya sayisi."""
+    removed = 0
+    if not directory or not os.path.isdir(directory):
+        return 0
+    keep_norm = os.path.normcase(os.path.abspath(keep)) if keep else None
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return 0
+    for name in names:
+        lower = name.lower()
+        is_setup = lower.startswith(f"{APP_NAME.lower()}-setup") and lower.endswith(".exe")
+        if not (is_setup or lower.endswith(".download")):
+            continue
+        full = os.path.join(directory, name)
+        if keep_norm and os.path.normcase(os.path.abspath(full)) == keep_norm:
+            continue
+        try:
+            if os.path.isfile(full):
+                os.remove(full)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def _safe_filename(name: str) -> str:
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name or "")
     return name.strip(" .") or f"{APP_NAME}-Setup.exe"
 
 
 def download_update(info: dict, dest_dir: str, timeout: int = 30) -> str:
+    """Setup dosyasini `dest_dir` altina indirir ve SHA-256 ile dogrular.
+
+    GUVENLIK: `dest_dir` ACL-KORUMALI olmalidir (bkz. secure_store.update_staging_dir).
+    Kullanici-yazilabilir bir dizine indirmek, dosyanin calistirilmadan once
+    degistirilmesine kapi acar."""
     url = info.get("download_url")
     if not url:
         raise UpdateError("Bu surumde indirilebilir setup dosyasi yok.")
+    if not dest_dir:
+        raise UpdateError("Guvenli indirme dizini hazirlanamadi.")
 
     os.makedirs(dest_dir, exist_ok=True)
     filename = _safe_filename(info.get("asset_name") or f"{APP_NAME}-Setup-{info.get('version')}.exe")
@@ -151,6 +242,9 @@ def download_update(info: dict, dest_dir: str, timeout: int = 30) -> str:
                 "Guncelleme dogrulanamadi (gecerli SHA256 digest yok veya uyusmadi); "
                 "guvenlik icin indirilmedi.")
         os.replace(tmp_path, final_path)
+        # Onceki surumlerden kalan setup dosyalari birikmesin (gereksiz ikili
+        # yigini = gereksiz saldiri yuzeyi).
+        purge_setup_dir(dest_dir, keep=final_path)
         return final_path
     except Exception as exc:
         try:

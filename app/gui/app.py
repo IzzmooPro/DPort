@@ -18,7 +18,7 @@ import customtkinter as ctk
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
-from core.adapter_manager import get_active_adapters
+from core.adapter_manager import get_active_adapters, get_all_adapters
 from core.dns_manager import set_dns, reset_to_dhcp, restore_dns, get_dns
 from core.config_manager import ConfigManager
 from core.discord_manager import (
@@ -38,7 +38,7 @@ from core.discord_unblock import (
     last_hosts_winerror,
     last_hosts_retry_info,
 )
-from core.failsafe import sync_logon_failsafe
+from core.failsafe import sync_logon_failsafe, last_failsafe_error
 from core.log_manager import LogManager
 from core.startup_manager import enable_startup, disable_startup, is_startup_enabled
 from core.lang import L, set_lang, current_lang
@@ -49,7 +49,14 @@ from core.app_info import (
     APP_VERSION,
     GITHUB_RELEASES_URL,
 )
-from core.updater import UpdateError, check_latest_release, download_update, verify_download
+from core import secure_store
+from core.updater import (
+    UpdateError,
+    check_latest_release,
+    download_update,
+    launch_verified,
+    purge_setup_dir,
+)
 
 # ── Tema — TEK KOYU tema (scalar hex; light/dark tuple YOK) ──────────────────
 # DPort tek temali: her acilista ayni koyu tasarim. Windows temasi okunmaz/takip
@@ -324,6 +331,16 @@ class DPortApp(ctk.CTk):
             user_data_path("dport.log"),
             enabled=self.cfg.get("log_enabled", True),
         )
+
+        # Failsafe gorev senkronizasyonu: MUMKUN OLAN EN ERKEN noktada ve
+        # SENKRON calisir (arka plana ERTELENMEZ). Onceki bir surumden kalmis,
+        # yazilabilir bir hedefi gosteren HIGHEST gorev burada kaldirilir;
+        # ertelenirse o gorev bu arada elle tetiklenebilirdi. Oturum basina
+        # bir kez yapilir (bkz. _ensure_failsafe); "Discord'u Ac" akisindaki
+        # cagri bu yuzden tekrar etmez.
+        self._failsafe_synced = False
+        self._ensure_failsafe()
+
         self._busy = False
         self._connecting = False    # "Discord'u Ac" akisi sirasinda hero "Baglaniyor..." kalir
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
@@ -334,6 +351,13 @@ class DPortApp(ctk.CTk):
         self._active_since = None    # yol kesintisiz ne zamandir aktif (aktif sure)
         self._ping_ms = None
         self._ping_last = 0.0
+        # DNS kurtarma yedegi ARTIK config.json'da tutulmaz (F4): kullanici-
+        # yazilabilir bir dosyadaki deger, yonetici yetkili netsh'e girdi
+        # olamaz. Kalici konum secure_store (ACL-korumali %ProgramData%\DPort);
+        # orasi hazirlanamazsa yalnizca BELLEK ici yedek kullanilir (bellek de
+        # saldirgan tarafindan degistirilemez, yalnizca cokme kurtarmasi kaybolur).
+        self._dns_backup_mem = {}
+        self._legacy_dns_backup = None
         self._unblocker = DiscordUnblocker(
             log=lambda m: self.log_mgr.console(f"unblock: {m}")
         )
@@ -344,13 +368,27 @@ class DPortApp(ctk.CTk):
             remove_hosts_redirect()
         except Exception:
             pass
-        # Cokme kurtarma: onceki oturum DNS'i 1.1.1.1 yapip geri yuklemeden
-        # kapandiysa (config'te backup KALMISSA) sistem DNS'ini burada, UI acilmadan
-        # ve kullanici etkilesimi baslamadan ONCE orijinaline dondur. Boylece README'nin
-        # "cokmede otomatik onarir" sozu DNS icin de gecerli olur ve _open_discord ile
-        # yaris olmaz. Yedek yoksa hicbir sey yapmaz (normal acilis gecikmesi olmaz).
+        # Eski surumden kalmis, KULLANICI-YAZILABILIR config.json icindeki DNS
+        # yedegini once config'ten SOK (bir daha hicbir yol onu okuyamasin), sonra
+        # ayri tut. Sessizce yonetici netsh'e GONDERILMEZ; arayuz acildiktan sonra
+        # kullaniciya degerleriyle birlikte gosterilip ONAY istenir (bkz.
+        # _offer_legacy_dns_restore).
         try:
-            if self.cfg.get("dns_backup"):
+            legacy = self.cfg.get("dns_backup")
+            if legacy:
+                self._legacy_dns_backup = legacy
+            if legacy is not None:
+                self.cfg.set("dns_backup", None)
+        except Exception:
+            self._legacy_dns_backup = None
+
+        # Cokme kurtarma: onceki oturum DNS'i 1.1.1.1 yapip geri yuklemeden
+        # kapandiysa (AYRICALIKLI state'te backup KALMISSA) sistem DNS'ini burada,
+        # UI acilmadan ve kullanici etkilesimi baslamadan ONCE orijinaline dondur.
+        # Bu veri yalnizca yukseltilmis surecin yazabildigi bir konumda tutuldugu
+        # icin otomatik uygulanmasi guvenlidir. Yedek yoksa hicbir sey yapmaz.
+        try:
+            if secure_store.load_dns_backup():
                 self._restore_dns()
                 self._flushdns()
         except Exception:
@@ -380,6 +418,11 @@ class DPortApp(ctk.CTk):
         threading.Thread(target=self._watchdog_loop, daemon=True).start()
         # Tek-ornek dinleyici: ikinci calistirma bu pencereyi one getirir.
         self._start_ipc()
+        # Eski, kullanici-yazilabilir indirme klasorundeki birikmis setup
+        # dosyalarini temizle (yalniz DPort'un kendi ad kalibi).
+        self.after(1000, self._purge_legacy_downloads)
+        # Eski config yedegi varsa kullaniciya sor (asla sessizce uygulama).
+        self.after(1600, self._offer_legacy_dns_restore)
         self.after(2500, self._check_updates_on_start)
 
     def _fit_height(self):
@@ -756,7 +799,10 @@ class DPortApp(ctk.CTk):
         if os.path.exists(ico):
             try:
                 from PIL import Image, ImageTk
-                im = Image.open(ico).convert("RGBA").resize((44, 44), Image.LANCZOS)
+                # Dosya tanimlayicisi acik kalmasin: convert()/resize() zaten
+                # BAGIMSIZ yeni goruntuler uretir, kaynak with ile kapatilir.
+                with Image.open(ico) as _src:
+                    im = _src.convert("RGBA").resize((44, 44), Image.LANCZOS)
                 self._logo_img = ImageTk.PhotoImage(im)
             except Exception:
                 self._logo_img = None
@@ -954,7 +1000,7 @@ class DPortApp(ctk.CTk):
         # Geri alinacak bir sey varsa (yol aktif YA DA DNS degistirilmis) buton aktif.
         # Onemli: hosts yazilamayip yol acilmasa bile DNS 1.1.1.1'e cekilmis olabilir;
         # bu durumda kullanici DNS'ini geri alabilmeli.
-        can_restore = active or bool(self.cfg.get("dns_backup"))
+        can_restore = active or bool(self._get_dns_backup())
         self.btn_restore.configure(state="normal" if can_restore else "disabled")
 
     @staticmethod
@@ -1307,12 +1353,40 @@ class DPortApp(ctk.CTk):
         # role uzerinden gidiyor. Temizlik: DnsAngel kapaninca + acilista self-heal.
 
     # ─────────────────────────── DNS yedek/geri-yukle ───────────────────────────
+    # ── Ayricalikli DNS kurtarma durumu (F4) ────────────────────────────────
+    # Bu veri yonetici yetkili `netsh` komutuna girdi oldugu icin standart
+    # kullanicinin YAZAMADIGI bir yerde durmalidir. Sira:
+    #   1) secure_store  -> %ProgramData%\DPort\dns_state.json (ACL: Users = RX)
+    #   2) bellek        -> store hazirlanamazsa; kurcalanamaz ama cokmede kaybolur
+    # Kullanici-yazilabilir config.json'a HICBIR KOSULDA dusulmez.
+    def _get_dns_backup(self) -> dict:
+        try:
+            stored = secure_store.load_dns_backup()
+        except Exception:
+            stored = {}
+        return stored or dict(self._dns_backup_mem)
+
+    def _set_dns_backup(self, backup) -> None:
+        data = dict(backup) if backup else {}
+        persisted = False
+        try:
+            persisted = secure_store.save_dns_backup(data or None)
+        except Exception:
+            persisted = False
+        # Bellek kopyasi her zaman guncel tutulur: store calisiyorsa zararsiz
+        # yedek, calismiyorsa tek kaynaktir.
+        self._dns_backup_mem = data
+        if data and not persisted:
+            self.log_mgr.console(
+                "DNS | korumali kurtarma dosyasi yazilamadi; yedek yalniz bu oturumda "
+                "tutuluyor (cokme kurtarmasi devre disi)", level="WARN")
+
     def _backup_dns(self, adapters):
         """DNS'i 1.1.1.1 yapmadan ONCE orijinal ayari (bir kez) yedekle.
         Cokme-kurtarma: yedek zaten varsa uzerine YAZMAYIZ (gercek orijinal korunur),
         boylece 'bizim degerimizi orijinal sanma' sorunu olmaz. Bu yuzden 1.1.1.1'i
         normalde kendi tercihi olarak kullanan kullanicinin ayari da dogru yedeklenir."""
-        if self.cfg.get("dns_backup"):
+        if self._get_dns_backup():
             return
         backup = {}
         for a in adapters:
@@ -1321,7 +1395,7 @@ class DPortApp(ctk.CTk):
             except Exception:
                 continue
         if backup:
-            self.cfg.set("dns_backup", backup)
+            self._set_dns_backup(backup)
             self.log_mgr.write(f"DNS | orijinal ayar yedeklendi ({len(backup)} adaptor)")
 
     @staticmethod
@@ -1355,19 +1429,44 @@ class DPortApp(ctk.CTk):
             }
         return clean
 
+    @staticmethod
+    def _live_adapter_names():
+        """Sistemde SU AN var olan adaptor adlari (set) — alinamazsa None.
+        (cagiran taraf ad dogrulamasini ATLAR, yoksa gecici bir listeleme
+        hatasi mesru geri yuklemeyi engellerdi)."""
+        try:
+            names = {
+                a.get("name") for a in get_all_adapters()
+                if isinstance(a.get("name"), str) and a.get("name")
+            }
+            return names or None
+        except Exception:
+            return None
+
     def _restore_dns(self):
         """YALNIZCA bizim degistirdigimiz (yedekteki) adaptorleri orijinal ayarina
         dondurur — statik ise statik, DHCP ise DHCP. Dokunmadigimiz adaptorlere
         (yedekte olmayan) HIC karisilmaz; kullanicinin manuel DNS'i bozulmaz.
         Basarisiz adaptorler yedekte kalir (bir sonraki denemede tekrar denenir);
-        yalnizca basariyla geri yuklenenler yedekten cikarilir. Config kullanici
-        tarafindan degistirilebildigi icin her yedek netsh'e verilmeden ONCE
-        _sanitize_dns_snapshot ile dogrulanir (bicimsiz/enjekte deger gecmez)."""
-        backup = dict(self.cfg.get("dns_backup") or {})
+        yalnizca basariyla geri yuklenenler yedekten cikarilir.
+
+        Iki katmanli dogrulama (F4):
+          1. Adaptor adi CANLI adaptor listesiyle karsilastirilir; sistemde
+             olmayan bir ad netsh'e HIC verilmez (yedekte kalir, adaptor geri
+             gelirse tekrar denenir).
+          2. Snapshot degerleri _sanitize_dns_snapshot ile IP olarak dogrulanir
+             (bicimsiz/cop deger gecmez)."""
+        backup = dict(self._get_dns_backup())
         remaining = dict(backup)
+        live = self._live_adapter_names()
         for name, snap in backup.items():
             if not isinstance(name, str) or not name.strip():
                 remaining.pop(name, None)   # gecersiz adaptor adi -> at, netsh'e verme
+                continue
+            if live is not None and name not in live:
+                # Sistemde boyle bir adaptor yok: netsh'e gonderme. Yedekte
+                # BIRAKILIR ki adaptor tekrar takildiginda geri yuklenebilsin.
+                self.log_mgr.write(f"DNS geri | {name} | atlandi (adaptor sistemde yok)")
                 continue
             snap = self._sanitize_dns_snapshot(snap)
             try:
@@ -1377,19 +1476,90 @@ class DPortApp(ctk.CTk):
             self.log_mgr.write(f"DNS geri | {name} | {'OK' if ok else msg}")
             if ok:
                 remaining.pop(name, None)
-        self.cfg.set("dns_backup", remaining or None)
+        self._set_dns_backup(remaining)
+
+    # ── Eski (guvenilmeyen) config yedegi icin onayli gecis ──────────────────
+    def _offer_legacy_dns_restore(self):
+        """Eski surumden kalan config.json yedegini SESSIZCE uygulamaz.
+
+        Bu veri kullanici-yazilabilir bir dosyadan geldigi icin dogrulugu
+        garanti edilemez. Degerler kullaniciya gosterilir; yalnizca acik onayla
+        ve normal yolun tum dogrulamalarindan (canli adaptor + IP bicimi)
+        gecerek uygulanir. Onay verilmezse veri atilir."""
+        legacy, self._legacy_dns_backup = self._legacy_dns_backup, None
+        if not legacy or not isinstance(legacy, dict) or not self._alive:
+            return
+        try:
+            details = self._describe_dns_backup(legacy)
+            if not details:
+                return
+            self.log_mgr.write(
+                f"DNS | eski config yedegi bulundu ({len(legacy)} adaptor), "
+                f"otomatik uygulanmadi, kullaniciya soruldu")
+            if not self._ask(L["dlg_legacy_dns_t"],
+                             L["dlg_legacy_dns_msg"].format(details=details)):
+                self.log_mgr.write("DNS | eski config yedegi kullanici onayi yok, atildi")
+                return
+            self._set_dns_backup(legacy)
+            threading.Thread(target=self._restore_legacy_dns_w, daemon=True).start()
+        except Exception as e:
+            self.log_mgr.console(f"DNS | eski yedek gecisi basarisiz: {e}", level="WARN")
+
+    def _restore_legacy_dns_w(self):
+        self._st(L["st_restoring"], YELL)
+        self._restore_dns()
+        self._flushdns()
+        self._st(L["st_restored"], GREEN)
+        self.after(0, self._refresh_status_async)
+
+    @staticmethod
+    def _describe_dns_backup(backup: dict) -> str:
+        """Yedegi kullaniciya gosterilecek kisa metne cevirir. Yalnizca
+        DOGRULANMIS degerler gosterilir; kullanici gordugunu onaylar."""
+        lines = []
+        for name, snap in backup.items():
+            if not isinstance(name, str) or not name.strip():
+                continue
+            clean = DPortApp._sanitize_dns_snapshot(snap)
+            v4 = clean["ipv4"]
+            if v4["dhcp"] or not v4["primary"]:
+                value = L["legacy_dns_dhcp"]
+            else:
+                value = v4["primary"]
+                if v4["secondary"]:
+                    value += f", {v4['secondary']}"
+            lines.append(f"• {name} → {value}")
+        return "\n".join(lines[:6])
 
     def _ensure_failsafe(self):
         """Logon hosts-temizleyici gorevini GUVENLI duruma senkronize eder: guvenli
-        konumdaysak (Program Files) gorevi guncel exe'ye yeniden yazar (onceki
-        surumden kalmis, yazilabilir konumu gosteren stale/tehlikeli gorev de
-        duzeltilir); degilsek kalmis gorevi temizler. Yalniz gorev yasam dongusu —
-        DNS/hosts/relay/Discord yollarina dokunmaz."""
+        konumdaysak (Program Files) gorevi guncel ve DOGRULANMIS exe'ye yeniden
+        yazar (onceki surumden kalmis, yazilabilir konumu gosteren stale/tehlikeli
+        gorev de duzeltilir); degilsek kalmis gorevi temizler. Yalniz gorev yasam
+        dongusu — DNS/hosts/relay/Discord yollarina dokunmaz.
+
+        Acilista bir kez calisir; sonraki cagrilar (or. "Discord'u Ac" akisi)
+        gereksiz yere tekrar senkronize ETMEZ. Senkronizasyon istisna ile
+        kesilirse bayrak isaretlenmez, boylece sonraki cagri yeniden dener."""
+        if getattr(self, "_failsafe_synced", False):
+            return
         try:
-            if sync_logon_failsafe():
+            ok = sync_logon_failsafe()
+            self._failsafe_synced = True
+            if ok:
                 self.log_mgr.console("failsafe: logon hosts-temizleyici gorevi hazir")
-        except Exception:
-            pass
+            else:
+                # Kurulmadi. Ya guvenli hedef yok (beklenen, zararsiz) ya da
+                # eski/guvensiz gorev KALDIRILAMADI — ikincisi guvenlik sorunudur
+                # ve SESSIZCE YUTULMAZ.
+                err = last_failsafe_error()
+                if err:
+                    self.log_mgr.write(f"FAILSAFE | {err}")
+                else:
+                    self.log_mgr.console(
+                        "failsafe: guvenli kurulum yolu yok, gorev kurulmadi")
+        except Exception as e:
+            self.log_mgr.console(f"failsafe: senkronizasyon hatasi: {e}", level="WARN")
 
     def _watchdog_loop(self):
         """Role beklenmedik sekilde olur de hosts yonlendirmesi kalirsa (Discord'u
@@ -1487,8 +1657,24 @@ class DPortApp(ctk.CTk):
             threading.Thread(target=self._download_and_launch_update, args=(info,), daemon=True).start()
 
     def _download_and_launch_update(self, info: dict):
+        # F3: installer ARTIK kullanici-yazilabilir %APPDATA% altina indirilmez.
+        # ACL-korumali staging dizini (%ProgramData%\DPort\updates, Users = yalniz
+        # oku/calistir) hazirlanamazsa indirme HIC yapilmaz — guvensiz konuma
+        # geri DUSULMEZ.
+        staging = None
         try:
-            path = download_update(info, user_data_path("updates"))
+            staging = secure_store.update_staging_dir()
+        except Exception:
+            staging = None
+        if not staging:
+            self.log_mgr.write(
+                "UPDATE | korumali staging dizini hazirlanamadi, indirme iptal edildi")
+            self.after(0, lambda: self._notify(L["update_title"], L["update_staging_failed"]))
+            self.after(0, lambda: self._st(L["st_ready"], SUB))
+            return
+
+        try:
+            path = download_update(info, staging)
         except UpdateError as exc:
             self.after(0, lambda: self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
             self.after(0, lambda: self._st(L["st_ready"], SUB))
@@ -1496,24 +1682,37 @@ class DPortApp(ctk.CTk):
 
         def _launch():
             if self._ask(L["update_title"], L["update_downloaded"]):
-                # TOCTOU: indirme+dogrulama ile calistirma arasinda yerel bir surec
-                # dosyayi degistirmis olabilir. DPort yukseltilmis oldugundan
-                # degistirilmis exe de yuksek yetkiyle calisirdi -> CALISTIRMADAN
-                # HEMEN ONCE yeniden dogrula; uymazsa hic calistirma.
-                if not verify_download(path, info.get("digest")):
+                # TOCTOU: dosya, hash'i KILITLI HANDLE uzerinden yeniden
+                # hesaplanir ve handle ACIKKEN calistirilir. Handle FILE_SHARE_READ
+                # ile acildigi icin arada yazma/silme/yeniden adlandirma MUMKUN
+                # DEGILDIR: dogrulanan baytlar ile calisan baytlar aynidir.
+                # Dogrulama basarisizsa surec HIC baslatilmaz.
+                ok, err = launch_verified(path, info.get("digest"))
+                if not ok:
+                    self.log_mgr.write(f"UPDATE | calistirma engellendi | {err}")
                     self._notify(L["update_title"], L["update_verify_failed"])
                     self._st(L["st_ready"], SUB)
                     return
-                try:
-                    subprocess.Popen([path])
-                    self.after(500, self.destroy)
-                except Exception as exc:
-                    self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}")
-                    self._st(L["st_ready"], SUB)
+                self.after(500, self.destroy)
             else:
                 self._st(L["st_ready"], SUB)
 
         self.after(0, _launch)
+
+    def _purge_legacy_downloads(self):
+        """Eski, KULLANICI-YAZILABILIR indirme klasorunde (%APPDATA%\\DPort\\updates)
+        birikmis DPort setup dosyalarini siler. Bunlar artik kullanilmiyor ve
+        yazilabilir bir konumda duran ikili yigini gereksiz saldiri yuzeyidir.
+        Yalnizca DPort'un kendi ad kalibi silinir; baska dosyaya dokunulmaz."""
+        def _work():
+            try:
+                removed = purge_setup_dir(user_data_path("updates"))
+                if removed:
+                    self.log_mgr.write(
+                        f"UPDATE | eski indirme klasorunden {removed} setup dosyasi temizlendi")
+            except Exception:
+                pass
+        threading.Thread(target=_work, daemon=True).start()
 
     def _open_releases_page(self):
         try:
@@ -1616,7 +1815,11 @@ class DPortApp(ctk.CTk):
             self.withdraw()
             icon_path = resource_path("assets", "icon.ico")
             if os.path.exists(icon_path):
-                img = Image.open(icon_path)
+                # pystray goruntuyu with blogundan SONRA kullanir; copy() ayni
+                # mod/boyutta BAGIMSIZ bir kopya verir (davranis degismez) ve
+                # dosya tanimlayicisi acik kalmaz.
+                with Image.open(icon_path) as _src:
+                    img = _src.copy()
             else:
                 img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
                 ImageDraw.Draw(img).ellipse([4, 4, 60, 60], fill=BLURPLE)
@@ -1670,7 +1873,9 @@ class _AboutWindow(ctk.CTkToplevel):
             from PIL import Image
             ic = resource_path("assets", "icon.ico")
             if os.path.exists(ic):
-                im = Image.open(ic).convert("RGBA")
+                # convert() bagimsiz yeni goruntu uretir; kaynak with ile kapatilir.
+                with Image.open(ic) as _src:
+                    im = _src.convert("RGBA")
                 self._img = ctk.CTkImage(light_image=im, dark_image=im, size=(42, 42))
                 ctk.CTkLabel(top, image=self._img, text="").pack(side="left")
         except Exception:
