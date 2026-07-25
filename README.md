@@ -61,8 +61,8 @@ Dürüst cevap: **yapmak istediği şeyler yönetici hakkı olmadan yapılamaz.*
 
 - Ağ adaptörünün **DNS ayarını değiştirmek** yönetici gerektirir.
 - Windows'un **`hosts` dosyası** korumalı bir sistem dosyasıdır; yazmak için yönetici gerekir.
-- **443 numaralı portu** dinlemek yönetici gerektirir.
-- Çökme sonrası temizlik yapan **zamanlanmış görevi** kurmak yönetici gerektirir.
+- **Kurtarma ve güncelleme dosyalarının tutulduğu korumalı konumları** yönetmek (oluşturmak ve izinlerini sıkı tutmak) yönetici gerektirir.
+- Çökme sonrası temizlik yapan **yüksek yetkili zamanlanmış görevi** güvenli biçimde kurmak yönetici gerektirir.
 
 Bunlar programın tamamının yaptığı iştir; başka bir amaçla yükseltilmiş yetki kullanılmaz. Ne yaptığını kendi gözünle görmek istersen kaynak kodu bu depoda.
 
@@ -72,7 +72,7 @@ Bunlar programın tamamının yaptığı iştir; başka bir amaçla yükseltilmi
 
 **DPort'un dijital imzası (kod imzalama sertifikası) yoktur.** Bu yüzden kurulumda Windows SmartScreen uyarısı çıkabilir ve UAC penceresinde yayıncı adı **"Bilinmeyen"** görünebilir.
 
-Bu normaldir ve sertifikanın ücretli olmasından kaynaklanır — programın bozuk veya zararlı olduğu anlamına gelmez, ama **imza olmadığı için Windows dosyanın kaynağını senin adına doğrulayamaz.** Bu yüzden:
+Bu uyarı, DPort'un şu anda kod imzalama sertifikasıyla imzalanmamış olmasından kaynaklanır. Programın bozuk veya zararlı olduğu anlamına gelmez, ama **imza olmadığı için Windows dosyanın kaynağını senin adına doğrulayamaz.** Bu yüzden:
 
 - Dosyayı **yalnızca** [resmî Releases sayfasından](https://github.com/IzzmooPro/DPort/releases/latest) indir.
 - Başka sitelerden indirilen "DPort" dosyalarına güvenme.
@@ -83,8 +83,8 @@ Bu normaldir ve sertifikanın ücretli olmasından kaynaklanır — programın b
 
 Aşağıdakiler bu depodaki kaynak kodda doğrulanabilir:
 
-- **Telemetri, analiz veya kullanım takibi yok.** Kodda hiçbir analiz kütüphanesi bulunmuyor ve program hiçbir yere veri gönderen istek (POST/PUT) yapmıyor.
-- **Parolanı, mesajlarını veya Discord hesabını okumaz.** Yerel röle şifrelenmiş trafiği çözmez; sertifika üretmez ve TLS bağlantısını sonlandırmaz. Discord ile sunucuları arasındaki şifreleme uçtan uca korunur — röle sadece paketleri aktarır.
+- **Telemetri, analiz veya kullanım takibi yok.** Kaynak kodunda telemetri, analiz, kullanıcı kimliği toplama veya bunları yükleyen bir mekanizma bulunmuyor. İşlevsel ağ bağlantıları aşağıdaki tabloda açıkça listelenmiştir.
+- **Parolanı, mesajlarını veya Discord hesabını okumaz.** DPort TLS bağlantısını sonlandırmaz, sertifika üretmez ve şifrelenmiş içeriği çözmez; mevcut TLS bağlantısını yalnızca TCP düzeyinde aktarır.
 - **Kayıt tutar ama yalnızca senin bilgisayarında.** Log dosyası hangi işlemin yapıldığını yazar (ör. "DNS ayarlandı"); hiçbir yere yüklenmez ve arayüzden temizleyebilirsin.
 
 DPort'un internete çıktığı yerler bunlarla sınırlıdır:
@@ -135,7 +135,7 @@ Bu sürüm güvenlik sertleştirmelerine odaklandı:
 
 <br>
 
-**Yöntem.** Engelleme genellikle TLS `ClientHello` paketindeki sunucu adı (SNI) görülerek yapılır. DPort, `hosts` üzerinden ilgili adresleri `127.0.0.1`'e yönlendirir; kendi rölesi bağlantıyı alır, gerçek IP'yi DoH (`https://1.1.1.1/dns-query`) ile çözer ve `ClientHello`'yu TLS kayıt katmanında küçük parçalara bölerek gönderir. Sonrası şeffaf bir TCP tünelidir; TLS uçtan uca istemci ile Discord sunucusu arasında kalır.
+**Yöntem.** Engelleme genellikle TLS `ClientHello` paketindeki sunucu adı (SNI) görülerek yapılır. DPort, `hosts` üzerinden ilgili adresleri `127.0.0.1`'e yönlendirir; kendi rölesi bağlantıyı alır, gerçek IP'yi DoH (`https://1.1.1.1/dns-query`) ile çözer ve `ClientHello`'yu TLS kayıt katmanında küçük parçalara bölerek gönderir. Sonrası şeffaf bir TCP tünelidir; TLS oturumu istemci ile Discord sunucusu arasında kurulur ve röle tarafından açılmaz.
 
 **Röle sınırları.** Röle yalnızca `127.0.0.1:443` üzerinde dinler ve yalnızca yukarıda listelenen Discord adreslerine tünel açar (allowlist). SNI okunamazsa güvenli varsayılana düşer, listede olmayan hedef reddedilir.
 
@@ -180,11 +180,11 @@ python -m unittest discover -s tests
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Normal* or when the app closes.
 
-**Why administrator rights:** changing DNS, writing to `hosts`, listening on port 443 and registering the cleanup scheduled task all require them. That is the whole job of the program.
+**Why administrator rights:** changing the adapter's DNS, writing to the protected `hosts` file, managing the protected recovery/update locations, and safely registering the high-privilege cleanup scheduled task all require them. That is the whole job of the program.
 
 **Not digitally signed.** Windows SmartScreen may warn you and show "Unknown publisher". Only download from the official Releases page above.
 
-**Privacy** (verifiable in this source code): no telemetry or analytics, no requests that upload data, and the relay does not decrypt traffic — it terminates no TLS and creates no certificates, so Discord's end-to-end encryption is preserved. Logs stay on your machine.
+**Privacy** (verifiable in this source code): the source contains no telemetry, analytics, user-identifier collection, or any mechanism that uploads such data — the functional network connections are listed explicitly in the Turkish *Gizlilik* section above. DPort does not terminate TLS, generate certificates, or decrypt the encrypted payload; it forwards the existing TLS connection at the TCP level. Logs stay on your machine.
 
 **Not a VPN.** It does not hide your IP, does not provide anonymity, and does not cover other applications' traffic.
 
