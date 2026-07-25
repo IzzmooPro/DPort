@@ -2,262 +2,204 @@
 
 # ⚡ DPort
 
-**Discord'u Türkiye'de takılmadan, hızlı ve güncel şekilde açan küçük bir yardımcı.**
+**Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
 ![Sürüm](https://img.shields.io/badge/Sürüm-v3.7-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
-</div>
+### ⬇️ [**DPort v3.7'yi İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-> 🧭 **Kısaca:** DPort'u aç → **Discord'u Aç** butonuna bas → gerisini program halletsin.
-> Ekstra VPN/WARP kurmana gerek yok; her şey uygulamanın kendi içinde olur.
+<sub>İndirilecek dosya: `DPort-Setup-3.7.exe`</sub>
+
+</div>
 
 ---
 
-## 🎯 DPort nedir?
+## DPort ne yapar?
 
-Türkiye'de Discord açılırken yaşanan **takılmalar**, **"Update Failed"** hataları ve **yavaş açılışları** çözmek için hazırlanmış tek pencerelik bir araç. Teknik ayarlarla uğraşmadan, tek tuşla Discord'u güncel ve düşük gecikmeyle açmanı sağlar.
+Bazı ağlarda Discord açılmaz, takılır veya güncellemesini bitiremez. DPort, Discord'un bağlanmak için kullandığı yolu düzelterek bu sorunu aşmayı dener.
 
-## ✨ Özellikler
-
-| | Özellik |
-|:--:|:--|
-| 🚀 | **Tek tıkla aç** — gerekiyorsa önce günceller, sonra Discord'u başlatır |
-| ⚡ | **Düşük gecikme** — bağlantı gecikmesini (ping) canlı gösterir |
-| 🔄 | **Otomatik güncelleme bildirimi** — yeni sürüm çıkınca sana haber verir |
-| ↩️ | **Normale Dön** — yaptığı tüm ayarları tek tuşla geri alır |
-| 🛡️ | **Güvenlik ağı** — beklenmedik kapanmada sistemi otomatik onarır |
-| 🌙 | **Sade modern arayüz** — koyu tema, tek pencere, tepside çalışır |
-
-## ⬇️ İndir
-
-Son sürümü buradan indir:
-
-### 👉 [**En Son Sürüm (Latest Release)**](https://github.com/IzzmooPro/DPort/releases/latest)
-
-Kurulum dosyası şu isimle görünür: **`DPort-Setup-<sürüm>.exe`**
-
-## 🚀 Nasıl kullanılır?
-
-1. **`DPort-Setup-x.x.exe`** ile kur (yönetici onayı ister).
-2. DPort'u aç → **`Discord'u Aç`** butonuna bas.
-3. Discord kullanırken **DPort'u sistem tepsisinde açık bırak.**
-4. İşin bitince istersen **`Normale Dön`** ile her şeyi eski hâline al.
-
-## 🔒 Neden yönetici izni ister?
-
-DPort, Discord'un bağlantısını hazırlamak için bazı **Windows ağ ayarlarını** geçici olarak düzenler ve işi bitince geri alır. Yönetici izni tam olarak bunun için gerekir — gizli bir arka plan işlemi için değil.
-
-## 🔄 Güncellemeler nasıl çalışır?
-
-DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **sana sorar**, zorla kurmaz:
-
-1. Yeni sürümü bulur ve gösterir.
-2. İndirmek isteyip istemediğini sorar.
-3. İndirilen dosya **SHA256 ile doğrulanır**, sonra kurulum için tekrar onay ister.
-
-## 🛡️ Güvenilirlik, Gizlilik ve VPN Farkı
-
-### Neden güvenebilirsin?
-
-- **Açık kaynak** — kodun tamamı bu depoda duruyor; hiçbir satırı gizli değil, istediğin zaman kendin okuyabilirsin.
-- **Yalnızca GitHub Releases üzerinden dağıtılır** — tek resmi indirme adresi her zaman [Releases sayfası](https://github.com/IzzmooPro/DPort/releases/latest). Başka bir siteden/indirici programdan gelen bir DPort dosyasına güvenme.
-- **Arkasında veri toplayan bir sunucu yok** — analitik, telemetri veya kullanıcıdan habersiz arka planda sunucuya veri gönderen bir mekanizma **yok**. Kodda dışarıyla konuşan yerler sınırlı ve hepsi işlevle ilgili — tam listesi:
-
-  | Adres | Ne için, ne zaman |
-  |:--|:--|
-  | `api.github.com`, `github.com` | Yeni sürüm var mı kontrolü ve indirme (yalnızca kullanıcı onaylarsa) |
-  | `1.1.1.1` (Cloudflare) | Discord adreslerinin gerçek IP'sini bulmak (DoH sorgusu) |
-  | Discord'un kendi sunucuları | Discord'u açmak/güncellemek — zaten amaç bu |
-
-  Bunların dışında hiçbir yere, hiçbir zaman veri gönderilmez. Kendi loglar bile yalnızca kendi bilgisayarındaki `dport.log` dosyasında kalır, hiçbir yere yüklenmez.
-- **Güncellemeler doğrulanır, zorla kurulmaz** — indirilen kurulum dosyası GitHub'ın kendi yayınladığı **SHA256 özetiyle** karşılaştırılır; uyuşmazsa kurulum **hiç başlamaz**. Her adımda önce sana sorulur.
-- **Her şey geri alınabilir** — DNS ve `hosts` değişiklikleri **Normale Dön** ile tek tuşla ya da programı kapatınca otomatik geri alınır. Beklenmedik bir çökme olsa bile, arka planda sürekli çalışan bir **güvenlik ağı** (watchdog + sonraki oturum açılışında temizleyici görev) sistemi kendiliğinden eski haline getirir — kalıcı bir iz bırakmaz.
-- **Kaldırma temiz** — kaldırıcı, DPort'un eklediği her şeyi (hosts satırları, zamanlanmış temizlik görevi) söker; başka hiçbir uygulamanın ayarına dokunmaz.
-
-> ⚠️ Program ağ ayarlarına (DNS, `hosts`) dokunduğu için Windows Defender veya bazı antivirüsler bunu **yanlışlıkla "şüpheli"** olarak işaretleyebilir (false-positive). Bu, bağlantı ayarlarını yöneten her araçta görülen normal bir durumdur; yukarıdaki maddeler nedeniyle güvenle kullanabilirsin.
-
-### VPN'den farkı
-
-DPort bir **VPN değildir** ve trafiğini hiçbir yere "taşımaz" — sadece Discord'u doğru yere **işaret eder**:
-
-| | VPN | DPort |
-|:--|:--|:--|
-| Trafiğin nereden geçer? | Şirketin **uzak sunucusundan** (tüm internetin) | **Sadece kendi bilgisayarından** (yalnız Discord) |
-| Kim görebilir? | VPN şirketi, teorik olarak tüm trafiğini | Kimse — araya hiçbir üçüncü sunucu girmiyor |
-| Neyi kapsar? | Tüm internet trafiğin | Yalnızca 5 Discord adresi (güncelleme, API, gateway, CDN) |
-| Şifreleme kim çözer? | VPN sunucusu (bazı VPN'lerde) | Kimse — uçtan uca şifre (TLS) Discord ile senin bilgisayarın arasında kalır |
-
-Somut olarak DPort şunu yapar: bilgisayarında **kendi içinde**, `127.0.0.1` üzerinde küçük bir yerel röle çalıştırır; yalnızca engellenen 5 Discord adresini (`updates.discord.com`, `discord.com`, `gateway.discord.gg`, `cdn.discordapp.com`, `media.discordapp.net`) bu röleye yönlendirip, ilk bağlantı paketini (TLS ClientHello) küçük parçalara bölerek Türkiye'deki DPI engelini aşar. Röle şifreli veriyi **açmaz/okumaz** — sadece paketi Discord'un gerçek sunucusuna iletir; şifre çözme uçtan uca Discord ile senin cihazın arasında kalır. Bunun dışında yaptığı tek şey, sistem DNS'ini geçici olarak Cloudflare'in genel sunucusu **1.1.1.1**'e çevirmektir. Tarayıcı geçmişine, şifrelere, mesajlara veya Discord dışındaki hiçbir uygulamanın trafiğine dokunmaz.
-
-## ⚠️ Başka DPI/Bypass Araçlarıyla Birlikte Kullanım
-
-Bilgisayarında **SplitWire, GoodbyeDPI, Zapret, WireSock/WARP** gibi başka bir DPI aşma / tünelleme aracı varsa, DPort ile **aynı anda çalıştırmaman** önemli. İkisi de aynı Discord trafiğini farklı yöntemlerle (tünel, yerel proxy, çekirdek seviyesi paket parçalama) ele geçirmeye çalıştığı için birbirine karışıp Discord'un hiç bağlanmamasına veya düzensiz çalışmasına yol açabilirler.
-
-> ⚠️ **Önemli:** Bu tür araçların çoğu (örneğin SplitWire) yalnızca **penceresini kapatmakla durmaz** — arka planda çalışmaya devam eden bir **Windows servisi veya zamanlanmış görev** bırakır. Yani "kapattım" sanıp DPort'a geçsen bile o araç arka planda hâlâ aktif olabilir. Bu yüzden DPort'a geçmeden önce diğer aracın yalnız penceresini değil, **servisini/zamanlanmış görevini de durdurman ya da onu tamamen kaldırman** gerekir.
-
-**DPort bu açıdan farklıdır:** arka planda çalışmaya devam eden bir tünel, proxy ya da paket yakalama servisi **bırakmaz**. DPort'u kapattığın anda yerel röle durur, `hosts` ve DNS değişiklikleri geri alınır. DPort'un kurduğu tek zamanlanmış görev (`DPortHostsFailsafe`), bir bypass'ı ayakta tutmak için **değil**, tam tersine — program beklenmedik şekilde çökerse arta kalan `hosts` satırlarını bir sonraki oturum açılışında **temizlemek** içindir; hiçbir trafiği izlemez veya yönlendirmez. Kaldırıcı bu görevi de siler.
-
-## 💻 Kaynaktan Çalıştırmak
-
-Python kuruluysa, kurulum yapmadan doğrudan kaynaktan çalıştırabilirsin:
-
-```bat
-python app/main.py
-```
-
-> Gerekli kütüphaneleri kendin kurmalısın (bkz. `requirements.txt`). Program bunları otomatik kurmaz veya denetlemez; eksik bir kütüphane varsa onu sen tamamlarsın.
-
-## ⚖️ Sorumluluk Reddi
-
-DPort; yalnızca eğitim, araştırma ve kişisel kullanım amacıyla geliştirilmiş açık kaynaklı bir projedir. Ticari bir ürün olarak sunulmamaktadır.
-
-- Yazılımın kullanımından doğabilecek doğrudan ya da dolaylı hiçbir zarardan geliştirici sorumlu tutulamaz; program **olduğu gibi** sağlanır.
-- Programı kullanıp kullanmamak tamamen kullanıcının kendi tercihi ve sorumluluğundadır.
-- Yürürlükteki yasa ve düzenlemelere uygun kullanım kullanıcıya aittir.
-- Örnek olarak Discord'un seçilmesinin nedeni, DPI ile erişimi kısıtlanan bir uygulama üzerinde yöntemin denenebilmesi gereğidir; belirli bir hizmeti hedef alma amacı taşımaz.
-- Kaynak kodun GitHub üzerinde paylaşılması, bilgi paylaşımı ve yazılım geliştirme öğrenimi amacına yöneliktir.
-
-## 👤 Geliştirici
-
-**IzzmooPro** · 📧 IzzmooPro@gmail.com
-
-<div align="center">
+Tek bir düğmesi vardır: **Discord'u Aç**. İşin bittiğinde **Normale Dön** düğmesi yaptığı değişiklikleri geri alır.
 
 ---
 
-*İyi sohbetler!* 💙
+## Üç adımda kullan
 
-</div>
+**1. İndir ve kur**
+[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.7.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
+
+**2. DPort'u aç**
+Masaüstü kısayolundan başlat. Tek pencerelik, sade bir arayüz açılır.
+
+**3. "Discord'u Aç" düğmesine bas**
+DPort gerekli ayarları yapar ve Discord'u başlatır. İşin bitince **Normale Dön**'e basabilirsin.
+
+> Discord'u kullanırken DPort'un açık kalması gerekir — bağlantı onun üzerinden gittiği için kapatırsan Discord'un bağlantısı kesilebilir. Pencereyi kapatınca tepside açık bırakabilirsin.
+
+---
+
+## Bilgisayarında neyi değiştirir?
+
+DPort üç şeye dokunur. Üçü de **Normale Dön** ile veya program kapanınca geri alınır:
+
+| Ne | Ne için | Geri alınır mı? |
+|---|---|---|
+| **DNS ayarı** | Ağ adaptörünün DNS'ini Cloudflare'e (`1.1.1.1`) çevirir, böylece Discord adresleri doğru çözülür | Evet — orijinal ayarın yedeklenir ve aynen geri yüklenir |
+| **`hosts` dosyası** | Yalnızca 5 Discord adresini kendi bilgisayarına yönlendirir | Evet — yalnızca kendi eklediği işaretli satırları siler, diğer satırlarına dokunmaz |
+| **Yerel röle** | Bilgisayarında küçük bir aktarıcı çalıştırır ve Discord trafiğini oradan geçirir | Evet — program kapanınca durur |
+
+Yönlendirilen adresler: `discord.com`, `updates.discord.com`, `gateway.discord.gg`, `cdn.discordapp.com`, `media.discordapp.net`.
+
+DPort beklenmedik şekilde kapanırsa (çökme, görev yöneticisinden kapatma), `hosts` değişikliğini bir sonraki açılışta veya oturum açışında otomatik temizlemeye çalışır.
+
+---
+
+## Neden yönetici izni istiyor?
+
+Dürüst cevap: **yapmak istediği şeyler yönetici hakkı olmadan yapılamaz.**
+
+- Ağ adaptörünün **DNS ayarını değiştirmek** yönetici gerektirir.
+- Windows'un **`hosts` dosyası** korumalı bir sistem dosyasıdır; yazmak için yönetici gerekir.
+- **443 numaralı portu** dinlemek yönetici gerektirir.
+- Çökme sonrası temizlik yapan **zamanlanmış görevi** kurmak yönetici gerektirir.
+
+Bunlar programın tamamının yaptığı iştir; başka bir amaçla yükseltilmiş yetki kullanılmaz. Ne yaptığını kendi gözünle görmek istersen kaynak kodu bu depoda.
+
+---
+
+## ⚠️ Windows "Bilinmeyen yayıncı" diyebilir
+
+**DPort'un dijital imzası (kod imzalama sertifikası) yoktur.** Bu yüzden kurulumda Windows SmartScreen uyarısı çıkabilir ve UAC penceresinde yayıncı adı **"Bilinmeyen"** görünebilir.
+
+Bu normaldir ve sertifikanın ücretli olmasından kaynaklanır — programın bozuk veya zararlı olduğu anlamına gelmez, ama **imza olmadığı için Windows dosyanın kaynağını senin adına doğrulayamaz.** Bu yüzden:
+
+- Dosyayı **yalnızca** [resmî Releases sayfasından](https://github.com/IzzmooPro/DPort/releases/latest) indir.
+- Başka sitelerden indirilen "DPort" dosyalarına güvenme.
+
+---
+
+## Gizlilik
+
+Aşağıdakiler bu depodaki kaynak kodda doğrulanabilir:
+
+- **Telemetri, analiz veya kullanım takibi yok.** Kodda hiçbir analiz kütüphanesi bulunmuyor ve program hiçbir yere veri gönderen istek (POST/PUT) yapmıyor.
+- **Parolanı, mesajlarını veya Discord hesabını okumaz.** Yerel röle şifrelenmiş trafiği çözmez; sertifika üretmez ve TLS bağlantısını sonlandırmaz. Discord ile sunucuları arasındaki şifreleme uçtan uca korunur — röle sadece paketleri aktarır.
+- **Kayıt tutar ama yalnızca senin bilgisayarında.** Log dosyası hangi işlemin yapıldığını yazar (ör. "DNS ayarlandı"); hiçbir yere yüklenmez ve arayüzden temizleyebilirsin.
+
+DPort'un internete çıktığı yerler bunlarla sınırlıdır:
+
+| Adres | Ne için |
+|---|---|
+| `1.1.1.1` (Cloudflare) | Discord adreslerinin IP'sini çözmek |
+| `api.github.com`, `github.com` | Yeni sürüm var mı kontrolü ve (sen onaylarsan) indirme |
+| Discord adresleri | Yukarıdaki tabloda listelenen bağlantıların aktarılması |
+
+---
+
+## DPort bir VPN değildir
+
+Bunu net söylemek gerekir:
+
+- **IP adresini gizlemez.** Bağlandığın sunucular gerçek IP'ni görmeye devam eder.
+- **Anonimlik sağlamaz.** İnternet servis sağlayıcın bir Discord bağlantısı kurduğunu görebilir.
+- **Diğer programların trafiğini etkilemez.** Yalnızca yukarıda listelenen Discord adreslerini kapsar.
+- **Her ağda çalışacağının garantisi yoktur.** Yöntem bazı ağlarda sonuç vermeyebilir.
+
+Amacı gizlenmek değil, Discord'un bağlantısını çalışır hale getirmektir.
+
+---
+
+## Güncellemeler
+
+DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **sana sorar** — onayın olmadan indirmez veya kurmaz.
+
+İndirilen kurulum dosyasının **SHA-256 özeti**, GitHub'ın o dosya için yayınladığı değerle karşılaştırılır. Uyuşmazsa dosya **çalıştırılmaz**. Doğrulama ile çalıştırma arasında dosyanın değiştirilememesi için dosya kilitli tutulur.
+
+---
+
+## v3.7'de ne değişti?
+
+Bu sürüm güvenlik sertleştirmelerine odaklandı:
+
+- **Discord artık normal kullanıcı yetkisiyle açılıyor** — DPort yönetici olarak çalışsa bile Discord bu yetkiyi devralmıyor.
+- **Güncelleme dosyası korumalı bir klasöre iniyor**, SHA-256 ile doğrulanıyor ve doğrulanan dosyanın ta kendisi çalıştırılıyor.
+- **DNS yedeği korumalı bir konumda saklanıyor**, böylece başka bir program onu değiştirip DPort'a yanlış ayar uygulatamıyor.
+- **Çökme sonrası temizlik görevi** yalnızca doğrulanmış kurulum klasörünü hedefliyor; kurulum ve güncellemede eski görevler temizleniyor.
+- **Dosya ve arayüz kaynakları** daha düzenli kapatılıyor.
+
+---
+
+<details>
+<summary><b>🔧 Teknik ayrıntılar</b></summary>
 
 <br>
 
----
+**Yöntem.** Engelleme genellikle TLS `ClientHello` paketindeki sunucu adı (SNI) görülerek yapılır. DPort, `hosts` üzerinden ilgili adresleri `127.0.0.1`'e yönlendirir; kendi rölesi bağlantıyı alır, gerçek IP'yi DoH (`https://1.1.1.1/dns-query`) ile çözer ve `ClientHello`'yu TLS kayıt katmanında küçük parçalara bölerek gönderir. Sonrası şeffaf bir TCP tünelidir; TLS uçtan uca istemci ile Discord sunucusu arasında kalır.
 
-<div align="center">
+**Röle sınırları.** Röle yalnızca `127.0.0.1:443` üzerinde dinler ve yalnızca yukarıda listelenen Discord adreslerine tünel açar (allowlist). SNI okunamazsa güvenli varsayılana düşer, listede olmayan hedef reddedilir.
 
-# ⚡ DPort (English)
+**Geri alma yolları.** Program kapanışı, tepsiden çıkış, çalışan bir watchdog, açılıştaki kendi kendini onarma ve oturum açılışında çalışan bir zamanlanmış görev — beşi birlikte `hosts` kalıntısını temizlemeye çalışır. DNS için orijinal ayar (statik ya da otomatik) yedeklenir ve aynen geri yüklenir; DPort'un dokunmadığı adaptörlere karışılmaz.
 
-**A small helper that opens Discord in Turkey — unblocked, fast, and up to date.**
+**Kaldırma.** Kaldırıcı `hosts` bloğunu siler ve zamanlanmış görevi kaldırır. Kullanıcı ayarların (`%APPDATA%\DPort`) silinmez.
 
-</div>
+**Diğer DPI/bypass araçları.** WARP, Zapret, GoodbyeDPI gibi araçlar aynı anda çalışıyorsa çakışma olabilir. Sorun yaşarsan birini kapatıp dene.
 
-> 🧭 **In short:** open DPort → press **Open Discord** → let the app handle the rest.
-> No extra VPN/WARP needed; everything happens inside the app.
+</details>
 
-## 🎯 What is DPort?
+<details>
+<summary><b>💻 Kaynaktan çalıştırmak</b></summary>
 
-A single-window tool made to fix the **freezes**, **"Update Failed"** errors, and **slow startups** when opening Discord in Turkey. It opens Discord — updated and with low latency — in one click, without you touching any technical settings.
+<br>
 
-## ✨ Features
-
-| | Feature |
-|:--:|:--|
-| 🚀 | **One-click open** — updates first if needed, then launches Discord |
-| ⚡ | **Low latency** — shows the connection latency (ping) live |
-| 🔄 | **Auto update notice** — tells you when a new version is out |
-| ↩️ | **Restore Normal** — undoes every setting it made, in one click |
-| 🛡️ | **Safety net** — auto-repairs the system after an unexpected close |
-| 🌙 | **Clean modern UI** — dark theme, single window, runs in the tray |
-
-## ⬇️ Download
-
-Get the latest version here:
-
-### 👉 [**Latest Release**](https://github.com/IzzmooPro/DPort/releases/latest)
-
-The installer looks like: **`DPort-Setup-<version>.exe`**
-
-## 🚀 How to use
-
-1. Install with **`DPort-Setup-x.x.exe`** (asks for admin approval).
-2. Open DPort → press **`Open Discord`**.
-3. Keep **DPort in the system tray** while using Discord.
-4. When done, use **`Restore Normal`** to revert everything if you like.
-
-## 🔒 Why does it need administrator rights?
-
-DPort temporarily adjusts some **Windows network settings** to prepare Discord's connection, then reverts them. Admin rights are needed exactly for that — not for any hidden background action.
-
-## 🔄 How updates work
-
-On start, DPort checks the latest release on GitHub. If there's a newer one, it **asks you first** — nothing is forced:
-
-1. It finds and shows the new version.
-2. It asks whether you want to download it.
-3. The download is **verified with SHA256**, then it asks again before installing.
-
-## 🛡️ Trust, Privacy, and How It Differs From a VPN
-
-### Why you can trust it
-
-- **Open source** — the entire codebase lives in this repo; nothing is hidden, read any line you want.
-- **Distributed only via GitHub Releases** — the one official download is always the [Releases page](https://github.com/IzzmooPro/DPort/releases/latest). Don't trust a DPort file from anywhere else.
-- **No server collecting your data** — there's no analytics, telemetry, or "phone-home" mechanism. The only places the code talks to the outside world are functional and listed here, in full:
-
-  | Address | What for, and when |
-  |:--|:--|
-  | `api.github.com`, `github.com` | Checking for a new version and downloading it (only if you approve) |
-  | `1.1.1.1` (Cloudflare) | Resolving the real IP of Discord's addresses (a DoH query) |
-  | Discord's own servers | Opening/updating Discord — the whole point of the app |
-
-  Nothing else, ever. Even its own logs stay in a local `dport.log` file on your machine — they're never uploaded anywhere.
-- **Updates are verified, never forced** — the downloaded installer is checked against the **SHA256 checksum GitHub itself publishes**; if it doesn't match, installation **doesn't start**. You're asked for confirmation at every step.
-- **Everything is reversible** — DNS and `hosts` changes are undone with one click (**Restore Normal**) or automatically when the app closes. Even after an unexpected crash, a background **safety net** (a watchdog plus a cleanup task on the next logon) restores the original state on its own — nothing is left behind.
-- **Clean uninstall** — the uninstaller removes everything DPort added (hosts lines, the scheduled cleanup task) and touches nothing that belongs to any other app.
-
-> ⚠️ Because the app touches network settings (DNS, `hosts`), Windows Defender or some antivirus tools may **falsely flag it as "suspicious"** (false-positive). This is normal for any tool that manages connection settings — the points above are why it's safe to use anyway.
-
-### How it differs from a VPN
-
-DPort is **not a VPN**, and it never "routes" your traffic anywhere — it just **points** Discord to the right place:
-
-| | VPN | DPort |
-|:--|:--|:--|
-| Where does your traffic go? | Through the provider's **remote server** (your whole internet) | **Only through your own PC** (Discord only) |
-| Who can see it? | The VPN company, in theory all your traffic | No one — no third-party server sits in between |
-| What does it cover? | Your entire internet traffic | Just 5 Discord addresses (update, API, gateway, CDN) |
-| Who decrypts it? | The VPN server (on some VPNs) | No one — end-to-end encryption (TLS) stays between Discord and your PC |
-
-Concretely, DPort runs a tiny local relay on `127.0.0.1`, **on your own machine**. It redirects only the 5 blocked Discord addresses (`updates.discord.com`, `discord.com`, `gateway.discord.gg`, `cdn.discordapp.com`, `media.discordapp.net`) to that relay, and splits the first connection packet (TLS ClientHello) into small fragments to get past Turkey's DPI block. The relay **never opens or reads** the encrypted data — it just forwards the packet to Discord's real server; decryption stays end-to-end between Discord and your device. The only other thing it does is temporarily point your system DNS to Cloudflare's public **1.1.1.1** resolver. It never touches your browser history, passwords, messages, or the traffic of any app other than Discord.
-
-## ⚠️ Using It Alongside Other DPI/Bypass Tools
-
-If your PC already has another DPI-bypass / tunneling tool such as **SplitWire, GoodbyeDPI, Zapret, or WireSock/WARP**, it's important **not to run it at the same time** as DPort. Both try to take over the same Discord traffic with different methods (tunnel, local proxy, kernel-level packet fragmentation), so they can interfere with each other and cause Discord to fail to connect or behave erratically.
-
-> ⚠️ **Important:** Most of these tools (SplitWire, for example) **don't stop when you just close their window** — they leave a **Windows service or scheduled task** that keeps running in the background. So even if you think you "closed" it and switched to DPort, that tool may still be active behind the scenes. Before switching to DPort, you should stop not just its window but its **service/scheduled task as well, or uninstall it entirely**.
-
-**DPort is different here:** it leaves **no** tunnel, proxy, or packet-capture service running in the background. The moment you close DPort, the local relay stops and the `hosts` and DNS changes are reverted. The only scheduled task DPort creates (`DPortHostsFailsafe`) exists **not** to keep a bypass alive, but the opposite — to **clean up** any leftover `hosts` lines on the next logon if the program ever crashes; it never monitors or routes any traffic. The uninstaller removes this task too.
-
-## 💻 Run from source
-
-If Python is installed, you can run it straight from source without installing:
-
-```bat
+```bash
+git clone https://github.com/IzzmooPro/DPort.git
+cd DPort
+pip install -r requirements.txt
 python app/main.py
 ```
 
-> You must install the required libraries yourself (see `requirements.txt`). The program does not auto-install or check them; if a library is missing, it's up to you to add it.
+Gereksinimler: Windows 10/11 ve Python 3.10+. Program yönetici onayı ister.
 
-## ⚖️ Disclaimer
+Testler:
 
-DPort is an open-source project built solely for educational, research, and personal use. It is not offered as a commercial product.
+```bash
+python -m unittest discover -s tests
+```
 
-- The developer cannot be held liable for any direct or indirect damage arising from the use of this software; it is provided **as is**.
-- Whether or not to use the program is entirely the user's own choice and responsibility.
-- Using it in accordance with applicable laws and regulations is the user's responsibility.
-- Discord was chosen as an example because the method needs a service whose access is restricted via DPI to be tested against; it does not aim to target any specific service.
-- Sharing the source code on GitHub serves the purpose of knowledge sharing and learning software development.
+</details>
 
-## 👤 Developer
+<details>
+<summary><b>🇬🇧 English summary</b></summary>
 
-**IzzmooPro** · 📧 IzzmooPro@gmail.com
+<br>
 
-<div align="center">
+**DPort** is a small Windows tool that helps Discord connect and update on networks where it otherwise fails. One button — **Open Discord** — and **Restore Normal** to undo.
+
+**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.7.exe`).
+
+**What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Normal* or when the app closes.
+
+**Why administrator rights:** changing DNS, writing to `hosts`, listening on port 443 and registering the cleanup scheduled task all require them. That is the whole job of the program.
+
+**Not digitally signed.** Windows SmartScreen may warn you and show "Unknown publisher". Only download from the official Releases page above.
+
+**Privacy** (verifiable in this source code): no telemetry or analytics, no requests that upload data, and the relay does not decrypt traffic — it terminates no TLS and creates no certificates, so Discord's end-to-end encryption is preserved. Logs stay on your machine.
+
+**Not a VPN.** It does not hide your IP, does not provide anonymity, and does not cover other applications' traffic.
+
+**Updates** are checked against GitHub, always ask before installing, and the downloaded installer is verified with SHA-256 before it is allowed to run.
+
+</details>
 
 ---
 
-*Happy chatting!* 💙
+## ⚖️ Sorumluluk reddi
 
-</div>
+DPort kişisel kullanım için yazılmış bir araçtır ve **olduğu gibi** sunulur. Kullanım sorumluluğu kullanıcıya aittir. Sistem ayarlarını (DNS ve `hosts`) değiştirdiği için ne yaptığını okuyarak kullanmanı öneririm. Bulunduğun ülkenin ve ağının kurallarına uymak senin sorumluluğundadır.
+
+Kaynak kodu bu depoda incelenebilir.
+
+## 👤 Geliştirici
+
+**IzzmooPro** — sorun bildirimi ve öneriler için [Issues](https://github.com/IzzmooPro/DPort/issues) sayfasını kullanabilirsin.
