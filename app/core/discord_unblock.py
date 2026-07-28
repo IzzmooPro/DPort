@@ -14,18 +14,23 @@ Nasil calisir:
   1. 127.0.0.1:443 uzerinde kucuk bir yerel role (relay) dinler.
   2. hosts dosyasina "updates.discord.com -> 127.0.0.1" satiri eklenir; boylece
      Discord'un kendi updater'i da bu roleye baglanir.
-  3. Role, gelen ClientHello'dan hedef host adini (SNI) okur, gercek IP'yi DoH
-     (1.1.1.1) ile cozer, sunucuya baglanir ve ClientHello'yu parcalayarak iletir.
+  3. Role, gelen ClientHello'dan hedef host adini (SNI) okur, gercek IP'yi
+     sertifika dogrulamali DoH ile cozer, sunucuya baglanir ve ClientHello'yu
+     parcalayarak iletir.
   4. Sonrasi seffaf TCP tunelidir; TLS uctan uca client ile sunucu arasinda kalir
      (role sertifikayi gormez, MITM yoktur).
 """
 import errno
+import ipaddress
 import json
 import os
+import ssl
 import stat
 import socket
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -63,18 +68,114 @@ _LEGACY_MARKS = (
     ("# >>> DNSGuardian Discord unblock >>>", "# <<< DNSGuardian Discord unblock <<<"),
 )
 
-_DOH_URL = "https://1.1.1.1/dns-query"
+_DOH_ENDPOINTS = (
+    ("Cloudflare IP", "https://1.1.1.1/dns-query"),
+    ("Cloudflare", "https://cloudflare-dns.com/dns-query"),
+    ("Google", "https://dns.google/resolve"),
+)
+
+
+class DohResolutionError(RuntimeError):
+    """Tum guvenli DoH saglayicilari basarisiz oldugunda yukseltilir."""
+
+
+def _doh_error_text(exc: Exception) -> str:
+    """Kullanici verisi icermeyen, sinirli uzunlukta DoH hata teshisi."""
+    reason = exc
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, Exception):
+        reason = exc.reason
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        verify_code = getattr(reason, "verify_code", None)
+        verify_message = getattr(reason, "verify_message", None) or str(reason)
+        return (
+            "sertifika dogrulanamadi"
+            f" (verify_code={verify_code}, verify_message={verify_message})"
+        )[:300]
+    return f"{type(reason).__name__}: {reason}"[:300]
+
+
+def _public_ipv4_answers(obj) -> List[str]:
+    """Basarili DoH JSON'indan yalniz genel kullanima acik IPv4 adreslerini al."""
+    if not isinstance(obj, dict) or obj.get("Status") != 0:
+        raise ValueError("DoH sunucusu basarisiz durum dondurdu")
+    answers = obj.get("Answer")
+    if not isinstance(answers, list):
+        raise ValueError("DoH yanitinda Answer listesi yok")
+
+    result = []
+    seen = set()
+    for answer in answers:
+        if not isinstance(answer, dict) or answer.get("type") != 1:
+            continue
+        try:
+            ip = ipaddress.ip_address(str(answer.get("data", "")))
+        except ValueError:
+            continue
+        if not isinstance(ip, ipaddress.IPv4Address) or not ip.is_global:
+            continue
+        text = str(ip)
+        if text not in seen:
+            result.append(text)
+            seen.add(text)
+    if not result:
+        raise ValueError("DoH yanitinda kullanilabilir genel IPv4 adresi yok")
+    return result
 
 
 # ────────────────────────────── DoH cozumleme ──────────────────────────────
-def doh_resolve(host: str, timeout: int = 8) -> List[str]:
-    """Gercek IP'leri DoH ile cozer. 1.1.1.1'e IP ile baglaniriz; SNI adi
-    gonderilmedigi icin bu istek DPI'a takilmaz."""
-    url = f"{_DOH_URL}?name={host}&type=A"
-    req = urllib.request.Request(url, headers={"accept": "application/dns-json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        obj = json.load(resp)
-    return [a["data"] for a in obj.get("Answer", []) if a.get("type") == 1]
+def doh_resolve(
+    host: str,
+    timeout: int = 8,
+    log: Optional[Callable[[str], None]] = None,
+) -> List[str]:
+    """Gercek IP'leri, sertifika dogrulamasi acik HTTPS DoH ile cozer.
+
+    Ilk yol DPI nedeniyle veya yerel sertifika zinciri sorunu yuzunden
+    calismazsa iki resmi HTTPS DoH adresi sirayla denenir. TLS dogrulamasi
+    hicbir kosulda kapatilmaz; tum yollar basarisizsa fail-closed davranilir.
+    """
+    host = host.strip().rstrip(".").lower()
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except (UnicodeError, AttributeError) as exc:
+        raise DohResolutionError("Gecersiz DNS adi") from exc
+    if not ascii_host or len(ascii_host) > 253:
+        raise DohResolutionError("Gecersiz DNS adi")
+
+    failures = []
+    query = urllib.parse.urlencode({"name": ascii_host, "type": "A"})
+    for label, endpoint in _DOH_ENDPOINTS:
+        url = f"{endpoint}?{query}"
+        req = urllib.request.Request(
+            url,
+            headers={"accept": "application/dns-json"},
+        )
+        try:
+            # context verilmemesi kasitlidir: urllib sistem/Python varsayilan
+            # guven deposunu, hostname kontrolunu ve CERT_REQUIRED'i kullanir.
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+                if status != 200:
+                    raise ValueError(f"HTTP {status}")
+                ips = _public_ipv4_answers(json.load(resp))
+            if failures and log:
+                try:
+                    log(f"DoH | yedek saglayici kullanildi | {label}")
+                except Exception:
+                    pass
+            return ips
+        except Exception as exc:
+            detail = _doh_error_text(exc)
+            failures.append(f"{label}: {detail}")
+            if log:
+                try:
+                    log(f"DoH | {label} basarisiz | {detail}")
+                except Exception:
+                    pass
+
+    raise DohResolutionError(
+        f"Guvenli DoH saglayicilarinin tamami basarisiz ({len(failures)}/{len(_DOH_ENDPOINTS)})"
+    )
 
 
 # ─────────────────────────────── SNI ayristirma ───────────────────────────────
@@ -181,10 +282,14 @@ class DiscordUnblocker:
         cached = self._ip_cache.get(host)
         if cached and cached[1] > time.time():
             return cached[0]
-        ips = doh_resolve(host)
+        ips = doh_resolve(host, log=self._l)
         if ips:
             self._ip_cache[host] = (ips, time.time() + 300)
         return ips
+
+    def preflight(self, host: str = "discord.com") -> List[str]:
+        """Relay acilmadan once guvenli cozumlemeyi dene ve sonucu cache'le."""
+        return self._resolve(host)
 
     # --- parcali ClientHello ile yeniden-denemeli upstream baglantisi ---
     def _open_upstream(self, hello: bytes, ips: List[str], attempts: int = 7):

@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.7-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.8-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
-### ⬇️ [**DPort v3.7'yi İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
+### ⬇️ [**DPort v3.8'i İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>İndirilecek dosya: `DPort-Setup-3.7.exe`</sub>
+<sub>İndirilecek dosya: `DPort-Setup-3.8.exe`</sub>
 
 </div>
 
@@ -27,7 +27,7 @@ Tek bir düğmesi vardır: **Discord'u Aç**. İşin bittiğinde **Normale Dön*
 ## Üç adımda kullan
 
 **1. İndir ve kur**
-[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.7.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
+[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.8.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
 
 **2. DPort'u aç**
 Masaüstü kısayolundan başlat. Tek pencerelik, sade bir arayüz açılır.
@@ -91,7 +91,7 @@ DPort'un internete çıktığı yerler bunlarla sınırlıdır:
 
 | Adres | Ne için |
 |---|---|
-| `1.1.1.1` (Cloudflare) | Discord adreslerinin IP'sini çözmek |
+| `https://1.1.1.1/dns-query`, `https://cloudflare-dns.com/dns-query`, `https://dns.google/resolve` | Discord adreslerinin IP'sini güvenli biçimde çözmek; ilk yol çalışmazsa sıradaki yedek sağlayıcıyı denemek |
 | `api.github.com`, `github.com` | Yeni sürüm var mı kontrolü ve (sen onaylarsan) indirme |
 | Discord adresleri | Yukarıdaki tabloda listelenen bağlantıların aktarılması |
 
@@ -118,15 +118,15 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.7'de ne değişti?
+## v3.8'de ne değişti?
 
-Bu sürüm güvenlik sertleştirmelerine odaklandı:
+Bu sürüm bazı bilgisayarlarda görülen güvenli DNS sertifika hatasına odaklandı:
 
-- **Discord artık normal kullanıcı yetkisiyle açılıyor** — DPort yönetici olarak çalışsa bile Discord bu yetkiyi devralmıyor.
-- **Güncelleme dosyası korumalı bir klasöre iniyor**, SHA-256 ile doğrulanıyor ve doğrulanan dosyanın ta kendisi çalıştırılıyor.
-- **DNS yedeği korumalı bir konumda saklanıyor**, böylece başka bir program onu değiştirip DPort'a yanlış ayar uygulatamıyor.
-- **Çökme sonrası temizlik görevi** yalnızca doğrulanmış kurulum klasörünü hedefliyor; kurulum ve güncellemede eski görevler temizleniyor.
-- **Dosya ve arayüz kaynakları** daha düzenli kapatılıyor.
+- **Tek güvenli DNS yolu yerine üç doğrulanmış HTTPS DoH yolu kullanılıyor.** İlk yol çalışmazsa Cloudflare ve Google yedekleri sırayla deneniyor.
+- **Sertifika ve alan adı doğrulaması kapatılmıyor.** Güvenli yolların tamamı başarısızsa DPort bağlantıyı açmadan duruyor.
+- **Geçersiz, yerel veya özel IP yanıtları reddediliyor;** yalnızca genel IPv4 adresleri röleye aktarılıyor.
+- **Güvenli DNS ön kontrolü artık sistem ayarlarından önce yapılıyor.** Ön kontrol başarısızsa DNS, `hosts` ve Discord'a dokunulmuyor.
+- **Sorun giderme açıklaması geliştirildi;** tarih-saat, antivirüs HTTPS taraması ve farklı ağ seçenekleri açıkça belirtiliyor.
 
 ---
 
@@ -135,7 +135,7 @@ Bu sürüm güvenlik sertleştirmelerine odaklandı:
 
 <br>
 
-**Yöntem.** Engelleme genellikle TLS `ClientHello` paketindeki sunucu adı (SNI) görülerek yapılır. DPort, `hosts` üzerinden ilgili adresleri `127.0.0.1`'e yönlendirir; kendi rölesi bağlantıyı alır, gerçek IP'yi DoH (`https://1.1.1.1/dns-query`) ile çözer ve `ClientHello`'yu TLS kayıt katmanında küçük parçalara bölerek gönderir. Sonrası şeffaf bir TCP tünelidir; TLS oturumu istemci ile Discord sunucusu arasında kurulur ve röle tarafından açılmaz.
+**Yöntem.** Engelleme genellikle TLS `ClientHello` paketindeki sunucu adı (SNI) görülerek yapılır. DPort, `hosts` üzerinden ilgili adresleri `127.0.0.1`'e yönlendirir; kendi rölesi bağlantıyı alır, gerçek IP'yi sertifika doğrulamalı HTTPS DoH ile çözer (Cloudflare yolları çalışmazsa Google yedeğini dener) ve `ClientHello`'yu TLS kayıt katmanında küçük parçalara bölerek gönderir. Sonrası şeffaf bir TCP tünelidir; TLS oturumu istemci ile Discord sunucusu arasında kurulur ve röle tarafından açılmaz.
 
 **Röle sınırları.** Röle yalnızca `127.0.0.1:443` üzerinde dinler ve yalnızca yukarıda listelenen Discord adreslerine tünel açar (allowlist). SNI okunamazsa güvenli varsayılana düşer, listede olmayan hedef reddedilir.
 
@@ -176,7 +176,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that helps Discord connect and update on networks where it otherwise fails. One button — **Open Discord** — and **Restore Normal** to undo.
 
-**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.7.exe`).
+**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.8.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Normal* or when the app closes.
 

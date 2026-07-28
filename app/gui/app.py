@@ -33,7 +33,6 @@ from core.discord_unblock import (
     add_hosts_redirect,
     remove_hosts_redirect,
     is_hosts_redirect_active,
-    doh_resolve,
     last_hosts_error,
     last_hosts_winerror,
     last_hosts_retry_info,
@@ -1067,7 +1066,15 @@ class DPortApp(ctk.CTk):
             # kendi surec baslatmasi/kapatmasi olcumu bozar).
             was_running = is_discord_running()
 
-            # 1) Sistem DNS'ini 1.1.1.1 yap — ama once ORIJINALI yedekle
+            # 1) Sisteme dokunmadan guvenli DoH yolunu dogrula. Tum saglayicilar
+            # basarisizsa DNS/hosts/Discord aynen kalir.
+            if not self._preflight_discord_unblock():
+                self.log_mgr.write(
+                    "DISCORD | guvenli DNS on-kontrolu basarisiz, sistem ayarlari degistirilmedi"
+                )
+                return
+
+            # 2) Sistem DNS'ini 1.1.1.1 yap — ama once ORIJINALI yedekle
             self._st(L["st_setting_dns"], YELL)
             adapters = get_active_adapters()
             if not adapters:
@@ -1079,7 +1086,7 @@ class DPortApp(ctk.CTk):
                 self.log_mgr.write(f"DNS | {a['name']} | {'OK' if ok else msg}")
             self._flushdns()
 
-            # 2) Engel asma yolunu ac (role + hosts)
+            # 3) Engel asma yolunu ac (role + hosts)
             self._st(L["st_path_prep"], YELL)
             path_ok = self._enable_discord_unblock()
 
@@ -1233,21 +1240,22 @@ class DPortApp(ctk.CTk):
             self.after(0, self._refresh_status_async)
 
     # ─────────────────────────── Unblock motoru ───────────────────────────
+    def _preflight_discord_unblock(self) -> bool:
+        """DNS/hosts degismeden once en az bir strict-HTTPS DoH yolunu dogrula."""
+        self._st(L["st_path_prep"], YELL)
+        try:
+            if not self._unblocker.preflight("discord.com"):
+                raise RuntimeError("bos yanit")
+            return True
+        except Exception as e:
+            self.log_mgr.write(f"UNBLOCK | DoH calismiyor, yol acilmadi | {e}")
+            self._st(L["st_fail_doh"], RED)
+            return False
+
     def _enable_discord_unblock(self) -> bool:
         """Yerel parcalayici roleyi baslatir ve engellenen Discord host'larini
         (update + API + gateway + CDN) ona yonlendirir."""
         try:
-            # DoH on-kontrol: gercek IP'yi guvenli DNS ile cozemiyorsak (bu agda
-            # 1.1.1.1 engelli olabilir) role ise yaramaz — yolu hic acma, hosts'u
-            # kirletme. Discord yine acilir (eski davranis), ama sistem bozulmaz.
-            try:
-                if not doh_resolve("discord.com"):
-                    raise RuntimeError("bos yanit")
-            except Exception as e:
-                self.log_mgr.write(f"UNBLOCK | DoH calismiyor, yol acilmadi | {e}")
-                self._st(L["st_fail_doh"], RED)
-                return False
-
             if not self._unblocker.start():
                 self.log_mgr.write("UNBLOCK | role baslatilamadi (443 mesgul)")
                 self._st(L["st_fail_port"], RED)
