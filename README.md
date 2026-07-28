@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.8-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.9-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
-### ⬇️ [**DPort v3.8'i İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
+### ⬇️ [**DPort v3.9'u İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>İndirilecek dosya: `DPort-Setup-3.8.exe`</sub>
+<sub>İndirilecek dosya: `DPort-Setup-3.9.exe`</sub>
 
 </div>
 
@@ -27,7 +27,7 @@ Tek bir düğmesi vardır: **Discord'u Aç**. İşin bittiğinde **Normale Dön*
 ## Üç adımda kullan
 
 **1. İndir ve kur**
-[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.8.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
+[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.9.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
 
 **2. DPort'u aç**
 Masaüstü kısayolundan başlat. Tek pencerelik, sade bir arayüz açılır.
@@ -118,15 +118,15 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.8'de ne değişti?
+## v3.9'da ne değişti?
 
-Bu sürüm bazı bilgisayarlarda görülen güvenli DNS sertifika hatasına odaklandı:
+Bu sürüm, Discord güncellenirken ve **Normale Dön** kullanılırken ekrandaki bilgileri daha açık ve hızlı hale getiriyor:
 
-- **Tek güvenli DNS yolu yerine üç doğrulanmış HTTPS DoH yolu kullanılıyor.** İlk yol çalışmazsa Cloudflare ve Google yedekleri sırayla deneniyor.
-- **Sertifika ve alan adı doğrulaması kapatılmıyor.** Güvenli yolların tamamı başarısızsa DPort bağlantıyı açmadan duruyor.
-- **Geçersiz, yerel veya özel IP yanıtları reddediliyor;** yalnızca genel IPv4 adresleri röleye aktarılıyor.
-- **Güvenli DNS ön kontrolü artık sistem ayarlarından önce yapılıyor.** Ön kontrol başarısızsa DNS, `hosts` ve Discord'a dokunulmuyor.
-- **Sorun giderme açıklaması geliştirildi;** tarih-saat, antivirüs HTTPS taraması ve farklı ağ seçenekleri açıkça belirtiliyor.
+- **Discord sürüm kartı güncelleme durumunu gösteriyor:** Kontrol ediliyor, Güncelleniyor, Yeniden başlat veya Güncellendi.
+- **Kurulu sürüm ile çalışan sürüm ayrı kontrol ediliyor;** güncelleme bittiyse ama eski Discord hâlâ açıksa yeniden başlatman gerektiği açıkça yazıyor.
+- **Gecikme ölçümü kaldırıldı;** arayüz gereksiz ağ beklemesi yapmıyor ve **Normale Dön** sonucu hemen ekrana yansıyor.
+- **Eski durum sonuçları yeni ekranı ezemiyor;** bağlantı kapatıldıktan sonra yanlışlıkla “Bağlandı” görünmesi engellendi.
+- **DNS ayarlarının yalnızca bir kısmı geri alınabilirse uygulama bunu açıkça söylüyor** ve tekrar denemeye izin veriyor.
 
 ---
 
@@ -176,7 +176,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that helps Discord connect and update on networks where it otherwise fails. One button — **Open Discord** — and **Restore Normal** to undo.
 
-**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.8.exe`).
+**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.9.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Normal* or when the app closes.
 

@@ -9,7 +9,6 @@ import sys
 import time
 import atexit
 import socket
-import ssl
 import threading
 import subprocess
 import ctypes
@@ -24,7 +23,9 @@ from core.config_manager import ConfigManager
 from core.discord_manager import (
     get_discord_update_status,
     launch_discord,
+    discord_restart_required,
     installed_discord_version,
+    running_discord_version,
     is_discord_running,
     close_discord_processes,
 )
@@ -345,11 +346,16 @@ class DPortApp(ctk.CTk):
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
         self._status_timer_id = None  # tek periyodik pano zinciri (after id)
         self._status_refreshing = False  # ayni anda tek yenileme thread'i
+        self._status_refresh_pending = False  # meşgulken istenen son yenileme kaybolmasin
+        self._status_generation = 0  # eski/yavas olcum yeni durumu ekranda ezmesin
         self._tray = None           # aktif tepsi ikonu (cift ikon onlemek icin)
         self._panel = None          # ayni anda tek alt pencere (ayarlar/log/yardim/hakkinda)
         self._active_since = None    # yol kesintisiz ne zamandir aktif (aktif sure)
-        self._ping_ms = None
-        self._ping_last = 0.0
+        # Discord updater gosterimi: hizli ara asamalar goz kirpmasin; yalniz
+        # kisa kontrol bilgisi, kalici yeniden-baslatma geregi ve dogrulanmis
+        # "Guncellendi" sonucu surum kartinda gosterilir.
+        self._discord_update_phase = ""
+        self._discord_update_notice_until = 0.0
         # DNS kurtarma yedegi ARTIK config.json'da tutulmaz (F4): kullanici-
         # yazilabilir bir dosyadaki deger, yonetici yetkili netsh'e girdi
         # olamaz. Kalici konum secure_store (ACL-korumali %ProgramData%\DPort);
@@ -644,7 +650,7 @@ class DPortApp(ctk.CTk):
         body = ctk.CTkFrame(self, fg_color=BG)
         body.pack(fill="both", expand=True, padx=12, pady=(9, 8))
 
-        # HERO — buyuk baglanti durum karti (canli durum noktasi + ping gostergesi)
+        # HERO — buyuk, sade baglanti durum karti.
         self.hero = ctk.CTkFrame(body, fg_color=CARD, corner_radius=16,
                                  border_width=1, border_color=BORDER)
         self.hero.pack(fill="x", pady=(0, 7))
@@ -652,16 +658,12 @@ class DPortApp(ctk.CTk):
         h.pack(fill="x", padx=17, pady=10)
         h.grid_columnconfigure(1, weight=1)
 
-        # Alt aciklama satirlari kaldirildi (istek): yalnizca durum baslgi + nokta
-        # + ping. Baslik dikey ortali.
+        # Alt aciklama satirlari kaldirildi: yalnizca durum basligi ve nokta.
         self.hero_dot = ctk.CTkLabel(h, text="●", font=_f(24), text_color=MUTED)
         self.hero_dot.grid(row=0, column=0, padx=(0, 13))
         self.hero_state = ctk.CTkLabel(h, text=L["hero_off"], font=_f(16, "bold"),
                                        text_color=SUB, anchor="w")
         self.hero_state.grid(row=0, column=1, sticky="w")
-        self.hero_ping = ctk.CTkLabel(h, text="—", font=_f(21, "bold"),
-                                      text_color=MUTED)
-        self.hero_ping.grid(row=0, column=2, sticky="e", padx=(8, 0))
 
         # Bilgi alani — 2x2 mini-kart grid (tek duz blok yerine ritimli KPI
         # kartlari). Sira KESIN: [Surum | DNS] ust, [Sunucular | Aktif Sure] alt.
@@ -895,11 +897,19 @@ class DPortApp(ctk.CTk):
 
     def _refresh_status_async(self):
         """Tek seferlik pano yenilemesi baslatir; ayni anda yalnizca bir
-        yenileme thread'i calisir (ust uste binen istekler yut sayilir)."""
-        if not self._alive or self._status_refreshing:
+        yenileme thread'i calisir. Mesgulken gelen son istek, calisan sistem
+        sorgusu bittiginde hemen tekrarlanir; Normale Don durumunun sonraki
+        zamanlayici tick'ini beklemesi engellenir."""
+        if not self._alive:
+            return
+        if self._status_refreshing:
+            self._status_refresh_pending = True
             return
         self._status_refreshing = True
-        threading.Thread(target=self._do_refresh_status, daemon=True).start()
+        generation = self._status_generation
+        threading.Thread(
+            target=self._do_refresh_status, args=(generation,), daemon=True
+        ).start()
 
     def _uptime_tick(self):
         """Aktif sure satirini saniye saniye canli gunceller (pano 6 sn'de bir
@@ -915,12 +925,15 @@ class DPortApp(ctk.CTk):
                 pass
         self.after(1000, self._uptime_tick)
 
-    def _do_refresh_status(self):
+    def _do_refresh_status(self, generation=None):
+        if generation is None:
+            generation = self._status_generation
         try:
             active = self._unblocker.is_active()
 
             # Discord surumu
             ver = installed_discord_version()
+            running_ver = running_discord_version()
             ver_txt = ver if ver else L["val_not_installed"]
 
             # Sistem DNS (ilk aktif adaptor)
@@ -937,49 +950,57 @@ class DPortApp(ctk.CTk):
             except Exception:
                 pass
 
-            # Gateway gecikmesi — sadece yol aktifken ve ~12 sn'de bir olc
-            ping_txt = L["val_none"]
-            if active:
-                if time.time() - self._ping_last > 12:
-                    self._ping_ms = self._measure_ping()
-                    self._ping_last = time.time()
-                ping_txt = f"{self._ping_ms} ms" if self._ping_ms else L["val_measuring"]
-
-            if not self._alive:   # kapandiysa panoyu guncelleme
+            if (
+                not self._alive
+                or generation != self._status_generation
+            ):   # kapandiysa veya bu olcum eskidiyse panoyu guncelleme
                 return
             try:
-                self.after(0, lambda: self._apply_status(
-                    active, ver_txt, dns_txt, ping_txt, ver, self._ping_ms if active else None))
+                self.after(
+                    0,
+                    lambda g=generation: self._apply_status_if_current(
+                        g, active, ver_txt, dns_txt, ver, running_ver
+                    ),
+                )
             except Exception:
                 pass
         finally:
             self._status_refreshing = False
+            if self._alive and self._status_refresh_pending:
+                self._status_refresh_pending = False
+                try:
+                    self.after(0, self._refresh_status_async)
+                except Exception:
+                    pass
 
-    def _apply_status(self, active, ver_txt, dns_txt, ping_txt, ver=None, ping_ms=None):
+    def _apply_status_if_current(self, generation, *args):
+        """Kuyruga alinmis eski bir UI sonucunun yeni durumu ezmesini engeller."""
+        if self._alive and generation == self._status_generation:
+            self._apply_status(*args)
+
+    def _apply_status(
+        self, active, ver_txt, dns_txt, ver=None, running_ver=None,
+    ):
         if not self.dash:
             return
-        # HERO — canli baglanti durumu + ping. Baglanma akisi sirasinda hero
+        # HERO — canli baglanti durumu. Baglanma akisi sirasinda hero
         # "Baglaniyor..." halinde kalir; periyodik refresh onu EZMESIN.
         if not self._connecting:
             if active:
                 self.hero_dot.configure(text_color=GREEN)
                 self.hero_state.configure(text=L["hero_on"], text_color=TEXT)
-                # ms hazirsa buyuk sayi; henuz olculuyorsa kucuk+soluk.
-                if ping_ms:
-                    self.hero_ping.configure(text=ping_txt, font=_f(21, "bold"),
-                                             text_color=self._ping_color(ping_ms))
-                else:
-                    self.hero_ping.configure(text=ping_txt, font=_f(11),
-                                             text_color=MUTED)
                 self.hero.configure(border_color=GREEN, border_width=2)
             else:
                 self.hero_dot.configure(text_color=MUTED)
                 self.hero_state.configure(text=L["hero_off"], text_color=SUB)
-                self.hero_ping.configure(text="—", font=_f(21, "bold"), text_color=MUTED)
                 self.hero.configure(border_color=BORDER, border_width=1)
 
+        ver_txt, ver_color = self._discord_version_tile(ver, running_ver, ver_txt)
         self.dash["version"].configure(
-            text=ver_txt, text_color=TEXT if ver else MUTED)
+            text=ver_txt,
+            text_color=ver_color,
+            font=_f(11, "bold") if "\n" in ver_txt else _f(13, "bold"),
+        )
         self.dash["dns"].configure(
             text=dns_txt, text_color=GREEN if dns_txt == DNS_V4[0] else TEXT)
         self.dash["servers"].configure(
@@ -1002,6 +1023,51 @@ class DPortApp(ctk.CTk):
         can_restore = active or bool(self._get_dns_backup())
         self.btn_restore.configure(state="normal" if can_restore else "disabled")
 
+    def _set_discord_update_phase(self, phase: str):
+        """Updater durumunu ana UI thread'inde saklar ve surum kartini yeniler."""
+        self._discord_update_phase = phase
+        if phase == "updated":
+            self._discord_update_notice_until = time.time() + 5
+        elif phase != "updated":
+            self._discord_update_notice_until = 0.0
+        self._refresh_status_async()
+
+    def _discord_version_tile(self, installed, running, fallback):
+        """Surum karti icin dogru, sade metni ve rengini dondurur."""
+        phase = self._discord_update_phase
+
+        # Kalici yeniden-baslatma durumu, daha eski bir Discord.exe calisiyorsa
+        # veya guncelleme sirasinda Discord gecici olarak kapandiysa gosterilir.
+        # Yeni exe calismaya basladiginda sonuc bes saniye gorunur.
+        needs_restart = discord_restart_required(installed, running)
+        if phase == "restart" and not needs_restart:
+            if installed and running and installed == running:
+                phase = "updated"
+                self._discord_update_phase = phase
+                self._discord_update_notice_until = time.time() + 5
+            elif running:
+                phase = ""
+                self._discord_update_phase = ""
+
+        if phase == "updated" and time.time() >= self._discord_update_notice_until:
+            phase = ""
+            self._discord_update_phase = ""
+
+        status = ""
+        color = TEXT if installed else MUTED
+        if phase == "checking":
+            status, color = L["discord_ver_checking"], YELL
+        elif phase == "updating":
+            status, color = L["discord_ver_updating"], YELL
+        elif phase == "restart" or (not phase and needs_restart):
+            status, color = L["discord_ver_restart"], YELL
+            self._discord_update_phase = "restart"
+        elif phase == "updated":
+            status, color = L["discord_ver_updated"], GREEN
+
+        base = installed if installed else fallback
+        return (f"{base}\n{status}" if status else base), color
+
     @staticmethod
     def _fmt_uptime(secs) -> str:
         """Saniyeyi kronometre bicimine cevirir: 'd:ss' veya 'sa:dd:ss'."""
@@ -1013,35 +1079,14 @@ class DPortApp(ctk.CTk):
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m}:{s:02d}"
 
-    @staticmethod
-    def _ping_color(ms):
-        if not ms:
-            return SUB
-        if ms < 80:
-            return GREEN
-        if ms < 150:
-            return YELL
-        return RED
-
-    def _measure_ping(self):
-        """gateway.discord.gg'ye TLS el sikismasi suresi (ms). Yol aktifken
-        sistem cozumu hosts uzerinden role gider; gercek Discord gecikmesini yansitir."""
-        try:
-            ctx = ssl.create_default_context()
-            raw = socket.create_connection(("gateway.discord.gg", 443), timeout=8)
-            t0 = time.time()
-            tls = ctx.wrap_socket(raw, server_hostname="gateway.discord.gg")
-            dt = (time.time() - t0) * 1000
-            tls.close()
-            return int(dt)
-        except Exception:
-            return None
-
     # ─────────────────────────── Discord'u Ac ───────────────────────────
     def _open_discord(self):
         if self._busy:
             return
         self._busy = True
+        # Acilis oncesi baslamis yavas bir durum olcumu, yeni baglanti
+        # durumunu eski verilerle ezmesin.
+        self._status_generation += 1
         self._connecting = True          # hero "Baglaniyor..." goster (periyodik refresh ezmesin)
         self._set_hero_connecting()
         self.btn_open.configure(state="disabled", text=L["btn_opening"])
@@ -1054,7 +1099,6 @@ class DPortApp(ctk.CTk):
         try:
             self.hero_dot.configure(text_color=YELL)
             self.hero_state.configure(text=L["hero_connecting"], text_color=TEXT)
-            self.hero_ping.configure(text="—", font=_f(21, "bold"), text_color=MUTED)
             self.hero.configure(border_color=YELL, border_width=2)
         except Exception:
             pass
@@ -1065,6 +1109,7 @@ class DPortApp(ctk.CTk):
             # DPort degisikliginden once kaydet (sonradan olcersek DPort'un
             # kendi surec baslatmasi/kapatmasi olcumu bozar).
             was_running = is_discord_running()
+            version_before = installed_discord_version()
 
             # 1) Sisteme dokunmadan guvenli DoH yolunu dogrula. Tum saglayicilar
             # basarisizsa DNS/hosts/Discord aynen kalir.
@@ -1115,15 +1160,19 @@ class DPortApp(ctk.CTk):
                 # baslatma/launch'tan ONCE alinir; aksi halde updater log
                 # filtresi (since_epoch) ilk satirlari kacirabilir.
                 started_at = time.time()
+                self.after(0, lambda: self._set_discord_update_phase("checking"))
                 ok, msg = self._restart_discord_for_new_path()
                 if not ok:
+                    self.after(0, lambda: self._set_discord_update_phase(""))
                     self.log_mgr.write(f"DISCORD | yeniden baslatma basarisiz | {msg}")
                     self._st(msg, RED)
                     return
                 self.log_mgr.write(f"DISCORD | yeniden baslatildi (yol degisti) | {msg}")
                 self._st(L["st_update_started"], GREEN)
                 threading.Thread(
-                    target=self._discord_update_result_w, args=(started_at,), daemon=True
+                    target=self._discord_update_result_w,
+                    args=(started_at, version_before),
+                    daemon=True,
                 ).start()
                 return
 
@@ -1135,8 +1184,11 @@ class DPortApp(ctk.CTk):
                 self._st(L["st_opening_fast"], YELL)
 
             started_at = time.time()
+            if use_updater:
+                self.after(0, lambda: self._set_discord_update_phase("checking"))
             ok, msg = launch_discord(use_updater=use_updater)
             if not ok:
+                self.after(0, lambda: self._set_discord_update_phase(""))
                 self.log_mgr.write(f"DISCORD | Başlatılamadı | {msg}")
                 self._st(f"{L['st_not_found']}: {msg}", RED)
                 return
@@ -1145,7 +1197,9 @@ class DPortApp(ctk.CTk):
             if use_updater:
                 self._st(L["st_update_started"], GREEN)
                 threading.Thread(
-                    target=self._discord_update_result_w, args=(started_at,), daemon=True
+                    target=self._discord_update_result_w,
+                    args=(started_at, version_before),
+                    daemon=True,
                 ).start()
             else:
                 self._st(L["st_opened"], GREEN)
@@ -1225,6 +1279,9 @@ class DPortApp(ctk.CTk):
         if not self._ask(L["dlg_restore_t"], L["dlg_restore_msg"]):
             return
         self._busy = True
+        # Baglanti acikken baslamis durum olcumunun gec kalan sonucu,
+        # geri alma tamamlandiktan sonra "Baglandi / 1.1.1.1" yazamasin.
+        self._status_generation += 1
         self.btn_restore.configure(state="disabled")
         threading.Thread(target=self._restore_normal_w, daemon=True).start()
 
@@ -1232,12 +1289,52 @@ class DPortApp(ctk.CTk):
         try:
             self._st(L["st_restoring"], YELL)
             self._disable_discord_unblock()
-            self._restore_dns()
+            restored = self._restore_dns()
             self._flushdns()
-            self._st(L["st_restored"], GREEN)
+            status_key = "st_restored" if restored else "st_restore_partial"
+            status_color = GREEN if restored else RED
+            self._st(L[status_key], status_color)
+            dns_txt = self._current_dns_text()
+            self.after(
+                0,
+                lambda d=dns_txt, retry=not restored:
+                    self._apply_restored_status(d, can_retry=retry),
+            )
         finally:
             self._busy = False
             self.after(0, self._refresh_status_async)
+
+    def _current_dns_text(self):
+        """Ilk aktif adaptorun panoda gosterilecek guncel DNS metnini dondurur."""
+        try:
+            adapters = get_active_adapters()
+            if adapters:
+                v4 = get_dns(adapters[0]["name"])["ipv4"]
+                if v4["dhcp"] or not v4["primary"]:
+                    return L["val_auto"]
+                return v4["primary"]
+        except Exception:
+            pass
+        return L["val_unknown"]
+
+    def _apply_restored_status(self, dns_txt, can_retry=False):
+        """Geri alma bittigi anda bilinen sonucu ekrana uygular.
+
+        Yeni durum taramasi beklenmez; sistem islemleri bu noktada zaten bitmistir.
+        Sonraki normal yenileme surum gibi diger alanlari tekrar dogrular.
+        """
+        if not self.dash:
+            return
+        self._connecting = False
+        self.hero_dot.configure(text_color=MUTED)
+        self.hero_state.configure(text=L["hero_off"], text_color=SUB)
+        self.hero.configure(border_color=BORDER, border_width=1)
+        self.dash["dns"].configure(text=dns_txt, text_color=TEXT)
+        self.dash["servers"].configure(text=L["val_none"], text_color=MUTED)
+        self._active_since = None
+        if "uptime" in self.dash:
+            self.dash["uptime"].configure(text=L["val_none"], text_color=MUTED)
+        self.btn_restore.configure(state="normal" if can_retry else "disabled")
 
     # ─────────────────────────── Unblock motoru ───────────────────────────
     def _preflight_discord_unblock(self) -> bool:
@@ -1323,7 +1420,7 @@ class DPortApp(ctk.CTk):
         "finishing": "st_upd_finishing",
     }
 
-    def _discord_update_result_w(self, started_at: float):
+    def _discord_update_result_w(self, started_at: float, version_before=None):
         deadline = time.time() + 90
         last_error = None
         last_message = None
@@ -1338,6 +1435,15 @@ class DPortApp(ctk.CTk):
                 self.log_mgr.console(f"Updater sonucu: {msg}", level="INFO")
                 self.cfg.set("discord_last_update_ok_at", time.time())
                 self._st(L["st_update_ok"], GREEN)
+                installed = installed_discord_version()
+                running = running_discord_version()
+                if discord_restart_required(installed, running):
+                    phase = "restart"
+                elif installed and installed != version_before:
+                    phase = "updated" if installed == running else "restart"
+                else:
+                    phase = ""
+                self.after(0, lambda p=phase: self._set_discord_update_phase(p))
                 return
             if status == "error":
                 last_error = msg
@@ -1348,6 +1454,8 @@ class DPortApp(ctk.CTk):
                 if key and stage != last_stage:
                     last_stage = stage
                     self._st(L[key], YELL)
+                    phase = "checking" if stage == "checking" else "updating"
+                    self.after(0, lambda p=phase: self._set_discord_update_phase(p))
                 if msg != last_message:
                     last_message = msg
                     self.log_mgr.console(f"Updater: {msg}", level="INFO")
@@ -1355,8 +1463,13 @@ class DPortApp(ctk.CTk):
         if last_error:
             self.log_mgr.console(f"Updater sonucu: {last_error}", level="ERROR")
             self._st(L["st_update_fail"], RED)
+            self.after(0, lambda: self._set_discord_update_phase(""))
         else:
             self.log_mgr.console("Updater sonucu 90 sn içinde kesinleşmedi.", level="WARN")
+            installed = installed_discord_version()
+            running = running_discord_version()
+            phase = "restart" if discord_restart_required(installed, running) else ""
+            self.after(0, lambda p=phase: self._set_discord_update_phase(p))
         # NOT: unblock burada KAPATILMAZ — Discord acikken API/gateway/CDN de bu
         # role uzerinden gidiyor. Temizlik: DnsAngel kapaninca + acilista self-heal.
 
@@ -1463,7 +1576,10 @@ class DPortApp(ctk.CTk):
              olmayan bir ad netsh'e HIC verilmez (yedekte kalir, adaptor geri
              gelirse tekrar denenir).
           2. Snapshot degerleri _sanitize_dns_snapshot ile IP olarak dogrulanir
-             (bicimsiz/cop deger gecmez)."""
+              (bicimsiz/cop deger gecmez).
+
+        Tum yedekler basariyla geri alindiysa True, tekrar denenmesi gereken
+        en az bir adaptor kaldiysa False dondurur."""
         backup = dict(self._get_dns_backup())
         remaining = dict(backup)
         live = self._live_adapter_names()
@@ -1485,6 +1601,7 @@ class DPortApp(ctk.CTk):
             if ok:
                 remaining.pop(name, None)
         self._set_dns_backup(remaining)
+        return not remaining
 
     # ── Eski (guvenilmeyen) config yedegi icin onayli gecis ──────────────────
     def _offer_legacy_dns_restore(self):
@@ -1515,9 +1632,11 @@ class DPortApp(ctk.CTk):
 
     def _restore_legacy_dns_w(self):
         self._st(L["st_restoring"], YELL)
-        self._restore_dns()
+        restored = self._restore_dns()
         self._flushdns()
-        self._st(L["st_restored"], GREEN)
+        status_key = "st_restored" if restored else "st_restore_partial"
+        status_color = GREEN if restored else RED
+        self._st(L[status_key], status_color)
         self.after(0, self._refresh_status_async)
 
     @staticmethod

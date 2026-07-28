@@ -360,53 +360,59 @@ class TestF4DnsRecoveryState(unittest.TestCase):
              mock.patch.object(self.gui_app, "get_all_adapters",
                                return_value=[{"name": n} for n in adapters]), \
              mock.patch.object(self.gui_app, "restore_dns", _restore):
-            app._restore_dns()
-        return app, seen
+            complete = app._restore_dns()
+        return app, seen, complete
 
     def test_adapter_missing_from_live_list_is_never_sent_to_netsh(self):
         backup = {
             "Ethernet": {"ipv4": {"primary": "192.168.1.1", "dhcp": False}},
             "HayaletAdaptor": {"ipv4": {"primary": "185.10.10.10", "dhcp": False}},
         }
-        app, seen = self._restore_with(backup, adapters=["Ethernet", "Wi-Fi"])
+        app, seen, complete = self._restore_with(backup, adapters=["Ethernet", "Wi-Fi"])
 
         self.assertEqual([n for n, _ in seen], ["Ethernet"])
         # Yok sayilan adaptor yedekte KALIR (geri takilirsa tekrar denenir).
         self.assertIn("HayaletAdaptor", app._dns_backup_mem)
         self.assertNotIn("Ethernet", app._dns_backup_mem)
+        self.assertFalse(complete)
 
     def test_malformed_values_are_sanitised_before_netsh(self):
         backup = {"Ethernet": {"ipv4": {"primary": "8.8.8.8 & calc.exe", "dhcp": False},
                                "ipv6": {"primary": "not-an-ip", "dhcp": False}}}
-        _, seen = self._restore_with(backup, adapters=["Ethernet"])
+        _, seen, complete = self._restore_with(backup, adapters=["Ethernet"])
 
         self.assertEqual(len(seen), 1)
         snap = seen[0][1]
         self.assertIsNone(snap["ipv4"]["primary"])
         self.assertIsNone(snap["ipv6"]["primary"])
+        self.assertTrue(complete)
 
     def test_valid_values_survive_sanitisation(self):
         backup = {"Ethernet": {"ipv4": {"primary": "192.168.1.1", "secondary": "9.9.9.9",
                                         "dhcp": False},
                                "ipv6": {"primary": "2606:4700:4700::1111", "dhcp": False}}}
-        _, seen = self._restore_with(backup, adapters=["Ethernet"])
+        _, seen, complete = self._restore_with(backup, adapters=["Ethernet"])
         snap = seen[0][1]
         self.assertEqual(snap["ipv4"]["primary"], "192.168.1.1")
         self.assertEqual(snap["ipv4"]["secondary"], "9.9.9.9")
         self.assertEqual(snap["ipv6"]["primary"], "2606:4700:4700::1111")
+        self.assertTrue(complete)
 
     def test_failed_adapter_is_kept_for_retry(self):
         backup = {"Ethernet": {"ipv4": {"primary": "192.168.1.1", "dhcp": False}}}
-        app, seen = self._restore_with(backup, adapters=["Ethernet"],
-                                       restore_result=(False, "netsh hatasi"))
+        app, seen, complete = self._restore_with(
+            backup, adapters=["Ethernet"], restore_result=(False, "netsh hatasi")
+        )
         self.assertEqual(len(seen), 1)
         self.assertIn("Ethernet", app._dns_backup_mem)   # tekrar deneme korundu
+        self.assertFalse(complete)
 
     def test_empty_adapter_name_is_dropped(self):
         backup = {"": {"ipv4": {"primary": "1.1.1.1", "dhcp": False}}}
-        app, seen = self._restore_with(backup, adapters=["Ethernet"])
+        app, seen, complete = self._restore_with(backup, adapters=["Ethernet"])
         self.assertEqual(seen, [])
         self.assertEqual(app._dns_backup_mem, {})
+        self.assertTrue(complete)
 
     # ── eski (guvenilmeyen) config yedegi ───────────────────────────────────
     def test_legacy_backup_is_not_applied_without_consent(self):

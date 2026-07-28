@@ -76,6 +76,34 @@ def installed_discord_version() -> Optional[str]:
     return best
 
 
+def running_discord_version() -> Optional[str]:
+    """Calisan Discord.exe sureclerinin en yuksek surumunu dondurur.
+
+    Kurulu en yeni ``app-*`` klasoru, Discord yeniden baslatilana kadar calisan
+    surumden farkli olabilir. Arayuz bu ayrimi kullanarak "yeniden
+    baslatilmali" durumunu dogru gosterebilir.
+    """
+    best = None
+    for path in get_discord_process_info().get("paths", []):
+        parent = os.path.basename(os.path.dirname(path or ""))
+        if not parent.startswith("app-"):
+            continue
+        ver = parent[4:]
+        if best is None or _ver_tuple(ver) > _ver_tuple(best):
+            best = ver
+    return best
+
+
+def discord_restart_required(
+    installed_version: Optional[str],
+    running_version: Optional[str],
+) -> bool:
+    """Yeni surum kurulu ama daha eski Discord.exe calisiyorsa True doner."""
+    if not installed_version or not running_version:
+        return False
+    return _ver_tuple(installed_version) > _ver_tuple(running_version)
+
+
 def _ver_tuple(ver: str):
     parts = []
     for p in ver.split("."):
@@ -200,6 +228,7 @@ def get_discord_update_status(
 
     latest = None
     saw_current_attempt = False
+    terminal = False
     for raw in lines:
         line = raw.strip()
         if not line:
@@ -207,28 +236,45 @@ def get_discord_update_status(
         line_epoch = _log_line_epoch(line)
         if since_epoch is not None and line_epoch is not None and line_epoch < since_epoch - 1:
             continue
-        if "Update to latest complete" in line:
+        if "Starting update to latest" in line:
+            # Ayni log dosyasinda birden fazla kontrol bulunabilir. Yeni deneme,
+            # onceki denemenin terminal sonucunu gecersiz kilar.
+            saw_current_attempt = True
+            terminal = False
+            latest = ("progress", "Discord update kontrol ediyor.", "checking")
+        elif "Update to latest complete" in line:
             latest = ("ok", "Discord update kontrolu tamamlandi.", "")
-        elif "Already up to date" in line:
+            terminal = True
+        elif "Already up to date" in line and not terminal:
             latest = ("progress", "Discord guncel gorunuyor, tamamlanma bekleniyor.", "finishing")
-        elif "Starting update to latest" in line or "Requesting manifest" in line:
+        elif "Requesting manifest" in line and not terminal:
             saw_current_attempt = True
             latest = ("progress", "Discord update kontrol ediyor.", "checking")
-        elif "SetManifests(Running" in line:
+        elif "SetManifests(Running" in line and not terminal:
             saw_current_attempt = True
             latest = ("progress", "Discord update manifesti alindi.", "checking")
-        elif "Executing download tasks" in line:
+        elif "Executing download tasks" in line and not terminal:
             latest = ("progress", "Discord update indiriyor.", "downloading")
-        elif "Host to be installed" in line:
+        elif "Host to be installed" in line and not terminal:
             latest = ("progress", "Discord ana guncelleme paketi bulundu.", "downloading")
-        elif "Requesting installation of module" in line:
+        elif "Requesting installation of module" in line and not terminal:
             latest = ("progress", "Discord modulleri yukleniyor.", "installing")
-        elif "Install of module" in line and "finished successfully" in line:
+        elif (
+            "Install of module" in line
+            and "finished successfully" in line
+            and not terminal
+        ):
             latest = ("progress", "Discord modulleri yukleniyor.", "installing")
-        elif "ERROR [updater_client]" in line:
+        elif "ERROR [updater_client]" in line and not terminal:
             latest = ("error", _compact_log_line(line), "")
-        elif "Failed " in line and "Failed to remove Windows arch transition flag" not in line:
+            terminal = True
+        elif (
+            "Failed " in line
+            and "Failed to remove Windows arch transition flag" not in line
+            and not terminal
+        ):
             latest = ("error", _compact_log_line(line), "")
+            terminal = True
 
     if latest:
         return latest
