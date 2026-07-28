@@ -2052,6 +2052,9 @@ class _CloseDialog(ctk.CTkToplevel):
     """X'e basinca: tepside kal / tamamen kapat / iptal (temali, 'hatirla' secenekli)."""
     def __init__(self, app):
         super().__init__(app)
+        # Pencere varsayilan boyut/konumuyla bir an gorunmesin. Tum icerik ve
+        # sahiplik hazirlandiktan sonra tek seferde ekrana cikarilir.
+        self.withdraw()
         self.result = None
         self.remember = False
         self.title(L["close_title"])
@@ -2067,10 +2070,12 @@ class _CloseDialog(ctk.CTkToplevel):
         app.update_idletasks()
         x = app.winfo_x() + (app.winfo_width() - w) // 2
         y = app.winfo_y() + (app.winfo_height() - h) // 3
-        self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         self.transient(app)
-        self.grab_set()
+        self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         self.attributes("-topmost", True)
+        self.deiconify()
+        self.lift()
+        self.grab_set()
 
     def _build(self):
         pad = ctk.CTkFrame(self, fg_color=BG)
@@ -2113,6 +2118,10 @@ class _ModalDialog(ctk.CTkToplevel):
     (bilgi/hata, result True). Ust hizali degil, ana pencere ortasina yakin."""
     def __init__(self, app, title, message, confirm=True, ok_text=None, cancel_text=None):
         super().__init__(app)
+        # CTkToplevel ilk olusturuldugunda Windows onu kisa sure bagimsiz/bos
+        # pencere gibi cizebilir. Hazirlik boyunca gizle; ancak geometri,
+        # transient sahiplik ve icerik tamamlandiktan sonra goster.
+        self.withdraw()
         self.result = False
         self.title(title)
         self.resizable(False, False)
@@ -2125,10 +2134,12 @@ class _ModalDialog(ctk.CTkToplevel):
         app.update_idletasks()
         x = app.winfo_x() + (app.winfo_width() - w) // 2
         y = app.winfo_y() + (app.winfo_height() - h) // 3
-        self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         self.transient(app)
-        self.grab_set()
+        self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         self.attributes("-topmost", True)
+        self.deiconify()
+        self.lift()
+        self.grab_set()
         self.bind("<Escape>", lambda e: self._cancel())
 
     def _build(self, title, message, confirm, ok_text, cancel_text):

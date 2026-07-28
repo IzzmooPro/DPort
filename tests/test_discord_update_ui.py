@@ -1,4 +1,5 @@
 import os
+import inspect
 import sys
 import tempfile
 import time
@@ -203,6 +204,22 @@ class TestStaleStatusRefresh(unittest.TestCase):
         app.after.assert_called_once()
         self.assertEqual(app.after.call_args.args[0], 0)
         self.assertFalse(app._status_refresh_pending)
+
+
+class TestModalVisibility(unittest.TestCase):
+    def test_update_modal_is_hidden_until_fully_prepared(self):
+        source = inspect.getsource(gui_app._ModalDialog.__init__)
+        self.assertLess(source.index("self.withdraw()"), source.index("self._build("))
+        self.assertLess(source.index("self.transient(app)"), source.index("self.deiconify()"))
+        self.assertLess(source.index("self.geometry("), source.index("self.deiconify()"))
+        self.assertLess(source.index("self.deiconify()"), source.index("self.grab_set()"))
+
+    def test_close_modal_uses_the_same_no_flash_order(self):
+        source = inspect.getsource(gui_app._CloseDialog.__init__)
+        self.assertLess(source.index("self.withdraw()"), source.index("self._build()"))
+        self.assertLess(source.index("self.transient(app)"), source.index("self.deiconify()"))
+        self.assertLess(source.index("self.geometry("), source.index("self.deiconify()"))
+        self.assertLess(source.index("self.deiconify()"), source.index("self.grab_set()"))
 
 
 if __name__ == "__main__":

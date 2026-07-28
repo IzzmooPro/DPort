@@ -21,7 +21,7 @@ from core.app_info import APP_NAME, APP_VERSION      # noqa: E402
 from core.updater import _pick_setup_asset, is_newer_version  # noqa: E402
 
 # Bu surumun supersede ettigi, en son YAYINLANMIS surum.
-PREVIOUS_RELEASE = "3.8"
+PREVIOUS_RELEASE = "3.9"
 
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
 _README = os.path.join(_ROOT, "README.md")
@@ -79,6 +79,12 @@ class TestReleaseAlignment(unittest.TestCase):
     def test_git_tag_form_is_also_detected(self):
         """GitHub tag'i 'vX.Y' bicimindedir; updater onu da cozmeli."""
         self.assertTrue(is_newer_version(f"v{APP_VERSION}", PREVIOUS_RELEASE))
+
+    def test_multi_digit_minor_version_is_compared_numerically(self):
+        """3.10 metinsel olarak 3.9'dan kucuk sanilmamali."""
+        self.assertTrue(is_newer_version("3.10", "3.9"))
+        self.assertTrue(is_newer_version("v3.10", "3.9"))
+        self.assertFalse(is_newer_version("3.9", "3.10"))
 
     def test_expected_setup_asset_name_is_selected(self):
         """Uretilen installer adi updater'in sectigi asset ile ayni olmali."""
