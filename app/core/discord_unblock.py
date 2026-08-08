@@ -57,6 +57,11 @@ BLOCKED_HOSTS = (
 # kullanmasini engeller. (Discord'un calismasini etkilemez.)
 ALLOWED_HOSTS = frozenset(BLOCKED_HOSTS)
 
+# Parcali ClientHello ile denenecek AZAMI IP sayisi (bkz. _open_upstream).
+# Parcali TLS yanitlanmadiginda her IP recv zaman asimi (4 sn) kadar bekletir;
+# bu sinir, dogrudan TLS'e gecisin IP sayisiyla birlikte buyumesini onler.
+_FRAG_SWEEP_IPS = 2
+
 HOSTS_PATH = os.path.join(
     os.environ.get("SystemRoot", r"C:\Windows"),
     "System32", "drivers", "etc", "hosts",
@@ -293,29 +298,51 @@ class DiscordUnblocker:
 
     # --- parcali ClientHello ile yeniden-denemeli upstream baglantisi ---
     def _open_upstream(self, hello: bytes, ips: List[str], attempts: int = 7):
-        """Parcalanmis ClientHello'yu gonderir ve sunucudan ServerHello gelene
-        kadar (gerekirse farkli IP'lerle) tekrar dener.
+        """ClientHello'yu gonderir ve sunucudan ServerHello gelene kadar
+        (gerekirse farkli IP/TLS stratejileriyle) tekrar dener.
 
         Bu DPI zamana gore degisken davraniyor: parcalanmis bir baglanti bile
         bazen resetleniyor. Reset, sunucunun el sikismasi sirasinda baglantiyi
-        kapatmasi (bos recv / RST) olarak gorunur. Denemeleri araliklara YAYARIZ;
-        boylece her deneme taze bir DPI karar penceresine denk gelir ve
-        birinde parcalama tutar. Tek deneme ~%75-100 tutuyorsa, yayilmis 7
-        deneme ile guvenilirlik pratikte ~%99.9'a cikar.
+        kapatmasi (bos recv / RST) olarak gorunur. Once her IP'de parcali TLS
+        denenir. CDN'in parcali ClientHello'yu kabul etmedigi ama alternatif bir
+        IP'nin DPI'a takilmadan dogrudan calistigi durumda, ayni sure butcesi
+        icinde her IP bir kez de normal ClientHello ile denenir. Kalan denemeler
+        parcali TLS'e ayrilir; boylece eski engel-asma davranisi korunur.
 
         Doner: (server_soketi, sunucudan_gelen_ilk_bloklar) veya (None, None)."""
+        if not ips or attempts <= 0:
+            return None, None
+
         frag = fragment_client_hello(hello)
-        for i in range(attempts):
+        # Parcali tarama SINIRLANIR (_FRAG_SWEEP_IPS). Parcali ClientHello CDN
+        # tarafindan yanitlanmadiginda her IP recv zaman asimina (4 sn) kadar
+        # bekler; DoH bazen 5 IP donduruyor ve sinirsiz tarama dogrudan TLS'e
+        # gecisi ~20 sn'ye kadar geciktiriyordu. Ilk birkac IP parcali denenir,
+        # ardindan TUM IP'ler normal ClientHello ile denenir; kalan butce yine
+        # parcali tekrarlara ayrilir. Tek/cift IP'de davranis DEGISMEZ.
+        candidates = []
+        candidates.extend((ip, frag, True) for ip in ips[:_FRAG_SWEEP_IPS])
+        candidates.extend((ip, hello, False) for ip in ips)
+        probe_count = len(candidates)
+        while len(candidates) < attempts:
+            ip = ips[(len(candidates) - probe_count) % len(ips)]
+            candidates.append((ip, frag, True))
+
+        for i, (ip, client_hello, fragmented) in enumerate(candidates[:attempts]):
             se = None
             try:
-                ip = ips[i % len(ips)]
                 se = socket.create_connection((ip, 443), timeout=8)
                 se.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                se.sendall(frag)
+                se.sendall(client_hello)
                 se.settimeout(4)
                 first = se.recv(65536)
                 if first and first[0] == 0x16:  # 0x16 = TLS ServerHello/handshake
                     se.settimeout(None)
+                    if not fragmented:
+                        self._l(
+                            "unblock: parcali TLS yanit vermedi; "
+                            "alternatif dogrudan TLS yolu kullanildi"
+                        )
                     return se, first
                 # bos veya beklenmedik yanit -> DPI reseti; tekrar dene
                 se.close()
@@ -325,8 +352,11 @@ class DiscordUnblocker:
                         se.close()
                     except OSError:
                         pass
-            # denemeler arasi artan bekleme: taze DPI penceresine denk gelmek icin
-            time.sleep(0.5 + i * 0.25)
+            # Ilk parcali/dogrudan IP taramasini hizli tut. Yalniz kalan parcali
+            # tekrar denemelerini taze DPI karar pencerelerine yay.
+            if i + 1 < min(len(candidates), attempts) and i + 1 >= probe_count:
+                retry_index = i + 1 - probe_count
+                time.sleep(0.5 + retry_index * 0.25)
         return None, None
 
     # --- tek baglanti islemesi ---

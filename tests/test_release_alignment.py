@@ -21,7 +21,7 @@ from core.app_info import APP_NAME, APP_VERSION      # noqa: E402
 from core.updater import _pick_setup_asset, is_newer_version  # noqa: E402
 
 # Bu surumun supersede ettigi, en son YAYINLANMIS surum.
-PREVIOUS_RELEASE = "3.9"
+PREVIOUS_RELEASE = "3.10"
 
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
 _README = os.path.join(_ROOT, "README.md")
@@ -55,19 +55,25 @@ class TestReleaseAlignment(unittest.TestCase):
                          "README rozeti ile APP_VERSION uyusmuyor")
 
     def test_no_stale_previous_version_left_in_sources(self):
-        """Kaynak/paketleme/docs icinde eski surum sabiti kalmamali."""
+        """Kaynak/paketleme/docs icinde eski UYGULAMA surumu kalmamali.
+
+        Yalnizca uygulama surumu baglamlari aranir: 'v3.10', '"3.10"',
+        'Setup-3.10'. Ciplak sayi ARANMAZ; aksi halde README'deki
+        'Python 3.10+' gibi ALAKASIZ bir surum notu yanlis alarm verirdi."""
         targets = [
             os.path.join(_ROOT, "app", "core", "app_info.py"),
             _README,
         ]
         if os.path.isfile(_ISS):
             targets.append(_ISS)
-        pattern = re.compile(re.escape(PREVIOUS_RELEASE))
+        old = re.escape(PREVIOUS_RELEASE)
+        pattern = re.compile(rf'(v{old}\b|"{old}"|Setup-{old}\b)')
         for path in targets:
             text = _read(path)
-            self.assertIsNone(pattern.search(text),
+            hit = pattern.search(text)
+            self.assertIsNone(hit,
                               f"{os.path.basename(path)} icinde eski surum "
-                              f"{PREVIOUS_RELEASE} kalmis")
+                              f"{PREVIOUS_RELEASE} kalmis: {hit.group(0) if hit else ''}")
 
     def test_current_version_supersedes_previous_release(self):
         """Updater, bu surumu yayindaki son surumden YENI gormeli."""
@@ -81,10 +87,15 @@ class TestReleaseAlignment(unittest.TestCase):
         self.assertTrue(is_newer_version(f"v{APP_VERSION}", PREVIOUS_RELEASE))
 
     def test_multi_digit_minor_version_is_compared_numerically(self):
-        """3.10 metinsel olarak 3.9'dan kucuk sanilmamali."""
+        """Cok haneli minor surum METINSEL degil SAYISAL karsilastirilmali."""
         self.assertTrue(is_newer_version("3.10", "3.9"))
         self.assertTrue(is_newer_version("v3.10", "3.9"))
         self.assertFalse(is_newer_version("3.9", "3.10"))
+        # 3.11 > 3.10 (metinsel karsilastirmada "3.11" < "3.9" sanilirdi)
+        self.assertTrue(is_newer_version("3.11", "3.10"))
+        self.assertTrue(is_newer_version("v3.11", "3.10"))
+        self.assertFalse(is_newer_version("3.10", "3.11"))
+        self.assertFalse(is_newer_version("3.11", "3.11"))
 
     def test_expected_setup_asset_name_is_selected(self):
         """Uretilen installer adi updater'in sectigi asset ile ayni olmali."""
