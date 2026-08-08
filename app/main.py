@@ -12,6 +12,14 @@ import socket
 # Çalışan örnekle haberleşme — gui/app.py içindekiyle AYNI olmalı.
 IPC_HOST = "127.0.0.1"
 IPC_PORT = 49317
+# DPort'a özgü istek/yanıt. Yalnızca porta bağlanabilmek YETMEZ: 49317'yi başka
+# bir program tutuyorsa (ya da bir port tarayıcı bağlantı kabul ediyorsa) DPort
+# çalışıyor sanılıp açılış sessizce iptal edilirdi. Bu yüzden sunucu tam ve
+# geçerli isteğe sabit bir ACK döner; istemci ACK'i doğrulamadan var saymaz.
+IPC_MAGIC = b"DPORT-IPC-1"
+IPC_REQUEST = IPC_MAGIC + b" SHOW\n"
+IPC_ACK = IPC_MAGIC + b" OK\n"
+IPC_TIMEOUT = 1.5
 MUTEX_NAME = "DPort_SingleInstance_v1"
 
 
@@ -22,20 +30,45 @@ def is_admin() -> bool:
         return False
 
 
-def elevate():
-    """Mevcut süreci yönetici olarak yeniden başlatır."""
+def elevate() -> bool:
+    """Mevcut süreci yönetici olarak yeniden başlatır.
+
+    Dönüş: yükseltme BAŞLATILABİLDİ mi. ShellExecuteW 32'den küçük/eşit bir
+    değer döndürürse işlem BAŞARISIZDIR (örn. kullanıcı UAC'yi reddetti ->
+    SE_ERR_ACCESSDENIED = 5). Eskiden dönüş değeri yok sayılıyordu; yükseltme
+    başarısız olsa bile süreç 0 koduyla, hiçbir şey olmamış gibi kapanıyordu."""
     params = (" ".join(f'"{a}"' for a in sys.argv[1:])
               if getattr(sys, "frozen", False)
               else " ".join(f'"{a}"' for a in sys.argv))
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    try:
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, None, 1)
+        return int(rc) > 32
+    except Exception:
+        return False
 
 
 def signal_existing() -> bool:
-    """Zaten çalışan bir örnek varsa ona 'kendini göster' de. Varsa True döner."""
+    """Çalışan bir DPort örneği varsa ona 'kendini göster' der.
+
+    Yalnızca doğru ACK alınırsa True döner. Bağlantıyı kabul eden ama DPort
+    olmayan bir dinleyici False verir ve normal açılış sürer.
+
+    İstek yazıldıktan sonra yazma tarafı kapatılır: sunucu bunu mesaj sonu
+    (EOF) olarak görür ve fazladan bayt gönderilmediğini kesin olarak
+    doğrulayabilir (bkz. gui/app.py serve_ipc_connection)."""
     try:
-        with socket.create_connection((IPC_HOST, IPC_PORT), timeout=1.5) as s:
-            s.sendall(b"SHOW")
-        return True
+        with socket.create_connection((IPC_HOST, IPC_PORT), timeout=IPC_TIMEOUT) as s:
+            s.settimeout(IPC_TIMEOUT)
+            s.sendall(IPC_REQUEST)
+            s.shutdown(socket.SHUT_WR)   # mesaj çerçevesi: istek bitti
+            ack = b""
+            while len(ack) < len(IPC_ACK):
+                chunk = s.recv(len(IPC_ACK) - len(ack))
+                if not chunk:
+                    break
+                ack += chunk
+        return ack == IPC_ACK
     except OSError:
         return False
 
@@ -97,9 +130,15 @@ if __name__ == "__main__":
     if signal_existing():
         sys.exit(0)
 
-    # 2) Yönetici değilse yükselt.
+    # 2) Yönetici değilse yükselt. Yükseltme başarısızsa (UAC reddedildi vb.)
+    # sessizce kapanma: kullanıcı neden hiçbir şey olmadığını anlamalı.
     if not is_admin():
-        elevate()
+        if not elevate():
+            fatal("DPort yönetici izniyle başlatılamadı.\n\n"
+                  "Yönetici onayı verilmediyse tekrar deneyip “Evet” seçin.\n"
+                  "DPort, DNS ve hosts ayarlarını değiştirdiği için bu izin "
+                  "olmadan çalışamaz.")
+            sys.exit(1)
         sys.exit(0)
 
     # 3) Atomik kilit — hızlı çift tıklama yarışlarına karşı son savunma.

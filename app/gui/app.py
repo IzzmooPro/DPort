@@ -309,9 +309,52 @@ DNS_V4 = ("1.1.1.1", "1.0.0.1")
 DNS_V6 = ("2606:4700:4700::1111", "2606:4700:4700::1001")
 
 # Tek-ornek IPC — main.py ile AYNI olmali. Ikinci calistirma bu porta baglanip
-# "SHOW" gonderir; calisan ornek kendini tepsiden/gorev cubugundan one getirir.
+# DPort'a ozgu istegi gonderir; calisan ornek ACK doner ve kendini one getirir.
 IPC_HOST = "127.0.0.1"
 IPC_PORT = 49317
+IPC_MAGIC = b"DPORT-IPC-1"
+IPC_REQUEST = IPC_MAGIC + b" SHOW\n"
+IPC_ACK = IPC_MAGIC + b" OK\n"
+IPC_TIMEOUT = 1.5
+
+# Discord updater izleme sinirlari. Sabit 90 sn'lik tek pencere, YAVAS ama
+# CALISAN bir guncellemeyi (buyuk indirme / modul kurulumu) yanlislikla
+# basarisiz gosteriyordu. Artik olcut "ne kadar surdu" degil "hala ilerliyor mu":
+#   IDLE : son DEGISIKLIKTEN beri gecen sure — asilirsa izleme birakilir
+#   HARD : toplam ust sinir — sonsuz bekleme olusmaz
+UPD_IDLE_TIMEOUT = 90
+UPD_HARD_LIMIT = 600
+UPD_POLL = 5
+
+
+def serve_ipc_connection(conn) -> bool:
+    """Tek bir IPC baglantisini isler.
+
+    Donus: TAM ve gecerli SHOW istegi alindi mi. Yalnizca bu durumda sabit ACK
+    gonderilir; eksik/yanlis/fazla payload sessizce reddedilir. Boylece bir port
+    taramasi veya ilgisiz bir istemci pencereyi one getiremez. Zaman asimi
+    sinirlidir; yavas/asili bir istemci dinleyiciyi kilitleyemez.
+
+    MESAJ CERCEVESI: istemci istegi yazdiktan sonra yazma tarafini kapatir
+    (shutdown SHUT_WR); sunucu EOF'a kadar okur. Kapasite bilerek
+    len(IPC_REQUEST) + 1'dir: bir bayt bile FAZLA veri gelirse istek
+    REDDEDILIR. Yalnizca len(IPC_REQUEST) kadar okuyup onek karsilastirmak
+    `IPC_REQUEST + b"JUNK"` gibi bir payload'i GECERLI sayiyordu."""
+    limit = len(IPC_REQUEST) + 1
+    try:
+        conn.settimeout(IPC_TIMEOUT)
+        data = b""
+        while len(data) < limit:
+            chunk = conn.recv(limit - len(data))
+            if not chunk:
+                break                      # EOF -> mesaj tamamlandi
+            data += chunk
+        if data != IPC_REQUEST:            # eksik, farkli VEYA fazla -> RED
+            return False
+        conn.sendall(IPC_ACK)
+        return True
+    except OSError:
+        return False
 
 
 class DPortApp(ctk.CTk):
@@ -511,16 +554,14 @@ class DPortApp(ctk.CTk):
                     conn, _ = srv.accept()
                 except OSError:
                     break
+                show = serve_ipc_connection(conn)
                 try:
-                    conn.recv(16)  # "SHOW"
+                    conn.close()
                 except OSError:
                     pass
-                finally:
-                    try:
-                        conn.close()
-                    except OSError:
-                        pass
-                self.after(0, self._show_window)
+                # Pencere YALNIZCA dogrulanmis istekte one getirilir.
+                if show:
+                    self.after(0, self._show_window)
 
         threading.Thread(target=listen, daemon=True).start()
 
@@ -1421,16 +1462,33 @@ class DPortApp(ctk.CTk):
     }
 
     def _discord_update_result_w(self, started_at: float, version_before=None):
-        deadline = time.time() + 90
+        began = time.time()
+        last_activity = began
         last_error = None
+        last_state = None
         last_message = None
         last_stage = None
 
-        while self._alive and time.time() < deadline:
-            time.sleep(5)
+        while self._alive:
+            now = time.time()
+            if (now - began >= UPD_HARD_LIMIT
+                    or now - last_activity >= UPD_IDLE_TIMEOUT):
+                break
+            time.sleep(UPD_POLL)
             if not self._alive:   # kapandiysa erken cik (config/Tk'ye dokunma)
                 return
             status, msg, stage = get_discord_update_status(max_age_seconds=120, since_epoch=started_at)
+            state = (status, msg, stage)
+            # AKTIFLIK olcutu: durum DEGISTIYSE ya da hala 'progress' geliyorsa
+            # updater calisiyor demektir. Buyuk bir indirme sirasinda updater
+            # 100+ saniye boyunca BIREBIR ayni satiri dondurebilir; yalnizca
+            # degisiklige bakmak bu durumda basariya ulasmadan idle timeout
+            # uretiyordu. get_discord_update_status log bayatsa zaten "unknown"
+            # dondugu icin TAZE bir "progress" gercek aktivite demektir.
+            # (unknown/error tekrarlari aktiflik SAYILMAZ -> sinirli timeout korunur.)
+            if state != last_state or status == "progress":
+                last_activity = time.time()
+            last_state = state
             if status == "ok":
                 self.log_mgr.console(f"Updater sonucu: {msg}", level="INFO")
                 self.cfg.set("discord_last_update_ok_at", time.time())
@@ -1448,6 +1506,10 @@ class DPortApp(ctk.CTk):
             if status == "error":
                 last_error = msg
             elif status == "progress":
+                # Yeni bir deneme/ilerleme geldi: ONCEKI hata artik BAYAT.
+                # Aksi halde gecici bir hatanin ardindan basariyla ilerleyen
+                # guncelleme, sonunda o eski hata yuzunden BASARISIZ raporlanirdi.
+                last_error = None
                 # Canli ilerleme: asama degistiyse gorunur alt satira da yansit
                 # (kullanici gecikmeyi 'calisiyor' diye anlar, donmus sanmaz).
                 key = self._UPD_STAGE_KEYS.get(stage)
@@ -1460,12 +1522,18 @@ class DPortApp(ctk.CTk):
                     last_message = msg
                     self.log_mgr.console(f"Updater: {msg}", level="INFO")
 
+        if not self._alive:   # kapandi: Tk/config'e DOKUNMA
+            return
+
         if last_error:
             self.log_mgr.console(f"Updater sonucu: {last_error}", level="ERROR")
             self._st(L["st_update_fail"], RED)
             self.after(0, lambda: self._set_discord_update_phase(""))
         else:
-            self.log_mgr.console("Updater sonucu 90 sn içinde kesinleşmedi.", level="WARN")
+            waited = int(time.time() - began)
+            self.log_mgr.console(
+                f"Updater sonucu {waited} sn içinde kesinleşmedi "
+                f"(ilerleme durdu).", level="WARN")
             installed = installed_discord_version()
             running = running_discord_version()
             phase = "restart" if discord_restart_required(installed, running) else ""
@@ -1748,8 +1816,12 @@ class DPortApp(ctk.CTk):
         try:
             info = check_latest_release(self.VERSION)
         except UpdateError as exc:
+            # `exc` except blogunun SONUNDA SILINIR; lambda sonradan (Tk after ile)
+            # calistiginda serbest degiskene erisemez ve NameError atardi.
+            # Mesaji SIMDI metne cevir ve varsayilan argumanla BAGLA.
+            message = f"{L['update_failed']}\n\n{exc}"
             if notify_when_current:
-                self.after(0, lambda: self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
+                self.after(0, lambda m=message: self._notify(L["update_title"], m))
                 self.after(0, lambda: self._st(L["st_ready"], SUB))
             return
 
@@ -1803,7 +1875,10 @@ class DPortApp(ctk.CTk):
         try:
             path = download_update(info, staging)
         except UpdateError as exc:
-            self.after(0, lambda: self._notify(L["update_title"], f"{L['update_failed']}\n\n{exc}"))
+            # Bkz. _run_update_check: `exc` blok sonunda silinir, mesaj ONCEDEN
+            # baglanmazsa gecikmeli callback NameError atar.
+            message = f"{L['update_failed']}\n\n{exc}"
+            self.after(0, lambda m=message: self._notify(L["update_title"], m))
             self.after(0, lambda: self._st(L["st_ready"], SUB))
             return
 

@@ -21,7 +21,7 @@ from core.app_info import APP_NAME, APP_VERSION      # noqa: E402
 from core.updater import _pick_setup_asset, is_newer_version  # noqa: E402
 
 # Bu surumun supersede ettigi, en son YAYINLANMIS surum.
-PREVIOUS_RELEASE = "3.10"
+PREVIOUS_RELEASE = "3.11"
 
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
 _README = os.path.join(_ROOT, "README.md")
@@ -91,11 +91,14 @@ class TestReleaseAlignment(unittest.TestCase):
         self.assertTrue(is_newer_version("3.10", "3.9"))
         self.assertTrue(is_newer_version("v3.10", "3.9"))
         self.assertFalse(is_newer_version("3.9", "3.10"))
-        # 3.11 > 3.10 (metinsel karsilastirmada "3.11" < "3.9" sanilirdi)
+        # Cok haneli minor surumler metinsel degil sayisal karsilastirilir.
         self.assertTrue(is_newer_version("3.11", "3.10"))
         self.assertTrue(is_newer_version("v3.11", "3.10"))
         self.assertFalse(is_newer_version("3.10", "3.11"))
         self.assertFalse(is_newer_version("3.11", "3.11"))
+        self.assertTrue(is_newer_version("3.12", "3.11"))
+        self.assertTrue(is_newer_version("v3.12", "3.11"))
+        self.assertFalse(is_newer_version("3.11", "3.12"))
 
     def test_expected_setup_asset_name_is_selected(self):
         """Uretilen installer adi updater'in sectigi asset ile ayni olmali."""
