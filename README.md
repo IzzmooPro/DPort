@@ -16,6 +16,18 @@
 
 ---
 
+## Arayüz
+
+Güncel v3.13 uygulamasının gerçek ekran görüntüsü:
+
+<p align="center">
+  <img src="docs/images/dport-v3.13-main.jpg" alt="DPort v3.13 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
+</p>
+
+Bağlantı etkinleştiğinde aynı düğme **Varsayılana Dön** olur. Discord'u kendi kısayolunuzdan açabilirsiniz.
+
+---
+
 ## DPort ne yapar?
 
 Bazı ağlarda Discord açılmaz, takılır veya güncellemesini bitiremez. DPort, Discord'un bağlanmak için kullandığı yolu düzelterek bu sorunu aşmayı dener.
