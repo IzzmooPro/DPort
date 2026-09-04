@@ -1,5 +1,5 @@
-İkon dosyasını buraya koyun:
-  assets/icon.ico
+Uygulama ikonu: app/assets/icon.ico
 
-Build.bat bu dosyayı otomatik olarak bulur.
-Dosya yoksa Build.bat ikonsuz devam eder.
+Paketleme tanımı packaging/DPort.spec dosyasındadır.
+İkon build için zorunludur; eksikse işlem durur.
+Yerel scripts/Build.bat bu paketleme tanımını kullanır.
