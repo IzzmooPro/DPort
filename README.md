@@ -18,10 +18,10 @@
 
 ## Arayüz
 
-v3.13 uygulamasından gerçek ekran görüntüsü (yeni sürüm için görsel henüz alınmadı):
+Güncel v3.15 uygulamasından gerçek ekran görüntüsü:
 
 <p align="center">
-  <img src="docs/images/dport-v3.13-main.jpg" alt="DPort v3.13 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
+  <img src="docs/images/dport-v3.15-main.png" alt="DPort v3.15 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
 </p>
 
 Bağlantı etkinleştiğinde aynı düğme **Varsayılana Dön** olur. Discord'u kendi kısayolunuzdan açabilirsiniz.
