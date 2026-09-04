@@ -10,7 +10,7 @@
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>Hazırlanan v3.14 dosyası (henüz yayımlanmadı; bağlantı son yayımlanan sürüme gider): `DPort-Setup-3.14.exe`</sub>
+<sub>v3.14 kurulum dosyası: `DPort-Setup-3.14.exe`</sub>
 
 </div>
 
@@ -130,7 +130,7 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.14'te ne değişti? (hazırlık)
+## v3.14'te ne değişti?
 
 - **DNS yedekleme dil bağımsız hale getirildi.** DNS durumu güvenle okunamazsa ağ ayarları değiştirilmez.
 - **Tüm DNS adresleri sıralarıyla saklanır.** IPv4 ve IPv6 geri yüklemesi tekrar okunarak doğrulanır; hata veya eksik doğrulama varsa yedek korunur.
@@ -198,7 +198,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.14 is in preparation, not yet published. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.14.exe`).
+**Version 3.14 is now available. Download:** [v3.14 release](https://github.com/IzzmooPro/DPort/releases/tag/v3.14) (`DPort-Setup-3.14.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 
