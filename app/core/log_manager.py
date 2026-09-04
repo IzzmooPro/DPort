@@ -4,6 +4,7 @@ Zaman damgalı DNS değişiklik logu.
 """
 import os
 import sys
+import threading
 from datetime import datetime
 from typing import List
 
@@ -19,21 +20,23 @@ class LogManager:
         self.enabled = enabled
         self.mirror_console = mirror_console
         self.max_bytes = max_bytes
+        self._lock = threading.RLock()
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-    def write(self, message: str):
+    def write(self, message: str, *, level: str = "INFO"):
         now = datetime.now()
         file_ts = now.strftime("%d.%m.%Y %H:%M:%S")
         console_ts = now.strftime("%H:%M:%S")
         line = f"[{file_ts}] {message}"
-        self.console(message, ts=console_ts)
+        self.console(message, level=level, ts=console_ts, persist=False)
 
         if not self.enabled:
             return
         try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-            self._rotate_if_needed()
+            with self._lock:
+                with open(self.log_path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+                self._rotate_if_needed()
         except Exception:
             pass
 
@@ -51,7 +54,11 @@ class LogManager:
         except Exception:
             pass
 
-    def console(self, message: str, level: str = "INFO", ts: str | None = None):
+    def console(self, message: str, level: str = "INFO", ts: str | None = None,
+                persist: bool = True):
+        if persist:
+            self.write(f"{level} | {message}", level=level)
+            return
         if not self.mirror_console or sys.stdout is None:
             return
         try:
@@ -64,15 +71,17 @@ class LogManager:
         if not os.path.exists(self.log_path):
             return []
         try:
-            with open(self.log_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            with self._lock:
+                with open(self.log_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
             return lines[-last_n:]
         except Exception:
             return []
 
     def clear(self):
         try:
-            with open(self.log_path, "w", encoding="utf-8") as f:
-                f.write("")
+            with self._lock:
+                with open(self.log_path, "w", encoding="utf-8") as f:
+                    f.write("")
         except Exception:
             pass

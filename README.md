@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.16-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.17-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.16 kurulum dosyası: `DPort-Setup-3.16.exe`</sub>
+<sub>v3.17 kurulum dosyası: `DPort-Setup-3.17.exe`</sub>
 
 </div>
 
@@ -130,7 +130,16 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.16'da ne değişti?
+## v3.17'de ne değişti?
+
+- Discord hedef adının TLS ClientHello içinden okunması düzeltildi; eksik veya bozuk SNI başka bir hedefe yönlendirilmez.
+- Sonraki IP'ler de süre bütçesi içinde parçalı ve doğrudan TLS ile denenir. DoH ve TLS aşamalarının ayrı toplam bekleme sınırları vardır.
+- Varsayılana Dön mevcut tünelleri kapatır. Normal kapanışlar ağ arızası olarak loglanmaz; kritik uyarılar dosyaya da yazılır.
+- DNS yedeği veya hosts yönlendirmesi duruyorsa kaldırma engellenir.
+- Kurulum ekranlarına DPort logosu ve lacivert-mor sol panel eklendi.
+- Kaynak sürüm TTNET ve Turkcell mobil bağlantısında denendi; tüm ağlarda çalışma garantisi verilmez.
+
+## Önceki sürüm: v3.16
 
 - Bağlantı pasifken açık kalan DPort'un doğrulanmış kurulu süreci, kurulum sırasında Restart Manager'ın 30 saniyelik beklemesine girmeden kapatılır ve kuruluma devam edilir.
 - Bağlantı aktifse güncelleme iptal edilir; kullanıcıdan önce **Varsayılana Dön** işlemini tamamlaması istenir. Kontrol, indirme öncesinde ve installer başlatılmadan hemen önce tekrarlanır.
@@ -172,11 +181,11 @@ Bu sürüm, DPort ile Discord'un açılışını birbirinden ayırıyor ve geri 
 
 **Yöntem.** Engelleme genellikle TLS `ClientHello` paketindeki sunucu adı (SNI) görülerek yapılır. DPort, `hosts` üzerinden ilgili adresleri `127.0.0.1`'e yönlendirir; kendi rölesi bağlantıyı alır, gerçek IP'yi sertifika doğrulamalı HTTPS DoH ile çözer (Cloudflare yolları çalışmazsa Google yedeğini dener) ve `ClientHello`'yu TLS kayıt katmanında küçük parçalara bölerek gönderir. Sonrası şeffaf bir TCP tünelidir; TLS oturumu istemci ile Discord sunucusu arasında kurulur ve röle tarafından açılmaz.
 
-**Röle sınırları.** Röle yalnızca `127.0.0.1:443` üzerinde dinler ve yalnızca yukarıda listelenen Discord adreslerine tünel açar (allowlist). SNI okunamazsa güvenli varsayılana düşer, listede olmayan hedef reddedilir.
+**Röle sınırları.** Röle yalnızca `127.0.0.1:443` üzerinde dinler ve yalnızca yukarıda listelenen Discord adreslerine tünel açar (allowlist). SNI eksik, bozuk veya liste dışındaysa bağlantı reddedilir; başka bir hedefe yönlendirilmez.
 
 **Geri alma yolları.** Program kapanışı, tepsiden çıkış, çalışan bir watchdog, açılıştaki kendi kendini onarma ve oturum açılışında çalışan bir zamanlanmış görev — beşi birlikte `hosts` kalıntısını temizlemeye çalışır. DNS için orijinal ayar (statik ya da otomatik) yedeklenir ve aynen geri yüklenir; DPort'un dokunmadığı adaptörlere karışılmaz.
 
-**Kaldırma.** Kaldırıcı `hosts` bloğunu siler ve zamanlanmış görevi kaldırır. Kullanıcı ayarların (`%APPDATA%\DPort`) silinmez.
+**Kaldırma.** DNS yedeği veya hosts yönlendirmesi duruyorsa kaldırma engellenir; önce **Varsayılana Dön** işlemi tamamlanmalıdır. Kullanıcı ayarların (`%APPDATA%\DPort`) silinmez.
 
 **Diğer DPI/bypass araçları.** WARP, Zapret, GoodbyeDPI gibi araçlar aynı anda çalışıyorsa çakışma olabilir. Sorun yaşarsan birini kapatıp dene.
 
@@ -204,6 +213,15 @@ Testler:
 python -m unittest discover -s tests
 ```
 
+v3.17 bağlantı düzeltmeleri: gerçek TLS ClientHello/SNI
+ayrıştırması, mevcut tünellerin durdurulması, IP başına parçalı/doğrudan TLS
+denemeleri ve kalıcı hata kayıtları. DoH çözümlemesi ve upstream TLS denemesi
+ayrı ayrı 24 saniye bütçelidir; bu, bağlantıyı etkinleştirme işleminin tamamı
+için 24 saniye garantisi değildir. Windows'un bekleyen DNS çağrısı zorla
+öldürülmez; çağıran süre dolunca döner, arka planda en fazla dört DoH çalışanı
+kalabilir. `ilk_tls_yaniti` kaydı tamamlanmış TLS doğrulaması veya Discord
+oturumunun çalıştığı anlamına gelmez. ISS uyumluluğu için ayrıca saha testi gerekir.
+
 </details>
 
 <details>
@@ -213,7 +231,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.16. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.16.exe`).
+**Version 3.17. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.17.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 

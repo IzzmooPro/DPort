@@ -3,6 +3,9 @@ from pathlib import Path
 import sys
 import types
 import unittest
+import os
+import subprocess
+import tempfile
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +91,58 @@ class InstallerActiveGuard(unittest.TestCase):
         self.assertIn("Stop-Process -Id $p.ProcessId -Force", block)
         self.assertIn("function PrepareToInstall", block)
         self.assertIn("{cm:ActiveConnectionBlock}", block)
+
+    def test_real_uninstall_gate_with_stubbed_system_operations(self):
+        compiler = Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6/ISCC.exe'
+        if not compiler.is_file():
+            self.skipTest('Inno Setup compiler unavailable')
+        logic = self.text[self.text.index('function InitializeUninstall():'):
+                          self.text.index('function PrepareToInstall(')]
+        # Run the real gate in a non-installing, non-elevated harness. Suppress
+        # only dialogs, not the active-state or process-stop decisions.
+        logic = logic.replace('UninstallSilent', 'True')
+        script = r'''
+[Setup]
+AppName=DPort guard test
+AppVersion=1
+DefaultDirName={tmp}\dport-guard-test
+CreateAppDir=no
+Uninstallable=no
+PrivilegesRequired=lowest
+OutputBaseFilename=guard-test
+[Code]
+var Active, StopOK: Boolean; Calls: Integer;
+function ConnectionRequiresRestore(): Boolean;
+begin Result := Active; end;
+function StopVerifiedPassiveDPort(): Boolean;
+begin Calls := Calls + 1; Result := StopOK; end;
+__LOGIC__
+function InitializeSetup(): Boolean;
+var Rows: TArrayOfString;
+begin
+  SetArrayLength(Rows, 3);
+  Active := True; StopOK := True; Calls := 0;
+  if (not InitializeUninstall()) and (Calls = 0) then Rows[0] := 'active:OK';
+  Active := False; StopOK := False; Calls := 0;
+  if (not InitializeUninstall()) and (Calls = 1) then Rows[1] := 'stop_failed:OK';
+  StopOK := True; Calls := 0;
+  if InitializeUninstall() and (Calls = 1) then Rows[2] := 'passive:OK';
+  SaveStringsToFile(ExpandConstant('{param:Out}'), Rows, False);
+  Result := False;
+end;
+'''.replace('__LOGIC__', logic)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            source = path / 'guard.iss'
+            source.write_text(script, encoding='utf-8')
+            compiled = subprocess.run([str(compiler), '/Q', '/O' + directory, str(source)],
+                                      capture_output=True, text=True, timeout=60)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            output = path / 'result.txt'
+            subprocess.run([str(path / 'guard-test.exe'), '/VERYSILENT', '/Out=' + str(output)],
+                           capture_output=True, timeout=30)
+            self.assertEqual(output.read_text(encoding='utf-8-sig').splitlines(),
+                             ['active:OK', 'stop_failed:OK', 'passive:OK'])
 
 
 if __name__ == "__main__":

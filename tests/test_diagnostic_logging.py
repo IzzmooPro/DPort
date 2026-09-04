@@ -62,7 +62,7 @@ class DiagnosticLoggingTests(unittest.TestCase):
         self.assertIn("yol=parcali", joined)
         self.assertIn("sonuc=timeout", joined)
         self.assertIn("yol=dogrudan", joined)
-        self.assertIn("sonuc=basarili", joined)
+        self.assertIn("sonuc=ilk_tls_yaniti", joined)
         self.assertIn("hedef=192.0.2.1:443", joined)
         self.assertIn("sure_ms=", joined)
         self.assertNotIn("private operating system text", joined)

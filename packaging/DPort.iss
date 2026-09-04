@@ -6,10 +6,13 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "DPort"
-#define MyAppVersion "3.16"
+#define MyAppVersion "3.17"
 #define MyAppPublisher "IzzmooPro"
 #define MyAppExeName "DPort.exe"
 #define MyAppId "{{7C9E6A54-2D3B-4F81-A6E2-1B0C9D8E7F60}"
+#ifndef MyDistDir
+  #define MyDistDir "..\dist\DPort"
+#endif
 
 [Setup]
 AppId={#MyAppId}
@@ -56,6 +59,10 @@ SetupIconFile=..\app\assets\icon.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+DisableWelcomePage=no
+WizardImageFile=assets\wizard-panel.bmp
+WizardSmallImageFile=assets\wizard-small.bmp
+WizardImageStretch=yes
 
 [Languages]
 Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
@@ -72,7 +79,7 @@ english.PassiveCloseFailed=DPort could not be closed safely. Setup was cancelled
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Ikonu ayrica kurulum kokune acikca kopyala (assets alt klasorunden bagimsiz,
 ; kararli bir yol); kisayollar bu dosyayi acikca referans alir.
 Source: "..\app\assets\icon.ico"; DestDir: "{app}"; DestName: "icon.ico"; Flags: ignoreversion
@@ -1182,6 +1189,19 @@ begin
   Result := True;
 end;
 
+function InitializeUninstall(): Boolean;
+begin
+  Result := False;
+  if ConnectionRequiresRestore() then begin
+    if not UninstallSilent then
+      MsgBox('Once DPort''ta Varsayilana Don islemini tamamlayin. Kaldirma iptal edildi.', mbError, MB_OK);
+    exit;
+  end;
+  Result := StopVerifiedPassiveDPort();
+  if not Result and not UninstallSilent then
+    MsgBox('DPort guvenli bicimde kapatilamadi. Kaldirma iptal edildi.', mbError, MB_OK);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): string;
 begin
   Result := '';
@@ -1216,9 +1236,9 @@ var
   Code: Integer;
 begin
   if CurUninstallStep = usUninstall then begin
-    { 1) calisan DPort'u kapat }
-    Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM ' + '{#MyAppExeName}',
-         '', SW_HIDE, ewWaitUntilTerminated, Code);
+    { Recheck immediately before removal, including silent uninstall. }
+    if ConnectionRequiresRestore() or not StopVerifiedPassiveDPort() then
+      RaiseException('DPort aktif veya guvenle kapatilamadi; kaldirma durduruldu.');
     { 2) hosts yonlendirmesini temizle }
     if not CleanHostsBlock(HostsFilePath()) then begin
       Log('DPort KALDIRMA: hosts yonlendirmesi temizlenemedi/dogrulanamadi');
