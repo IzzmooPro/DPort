@@ -352,7 +352,7 @@ class TestElevateReportsFailure(unittest.TestCase):
 #  4) Gecikmeli callback icinde silinmis exception degiskeni
 # ═══════════════════════════════════════════════════════════════════════════
 class _UpdateStub:
-    """_run_update_check / _download_and_launch_update icin asgari self."""
+    """Update delivery / download icin asgari self."""
 
     def __init__(self):
         self.VERSION = "3.12"
@@ -362,6 +362,8 @@ class _UpdateStub:
         self.log_mgr = types.SimpleNamespace(
             write=lambda m: None, console=lambda m, level="INFO": None)
         self._alive = True
+        self._busy = False
+        self._update_download_active = False
 
     def after(self, delay, func=None):
         if func is not None:
@@ -389,12 +391,13 @@ class TestDeferredCallbacksDoNotUseDeletedException(unittest.TestCase):
 
     def test_update_check_failure_callback_runs_without_nameerror(self):
         stub = _UpdateStub()
-        with mock.patch.object(gui_app, "check_latest_release",
-                               side_effect=gui_app.UpdateError("ag yok")):
-            self._bind(stub, "_run_update_check")(True)
-
-        self.assertTrue(stub.scheduled, "hata yolunda callback planlanmadi")
-        stub.run_scheduled()          # <-- duzeltme oncesi NameError
+        # Queue retains the exception object; UI delivery occurs after except.
+        results = []
+        try:
+            raise gui_app.UpdateError("ag yok")
+        except gui_app.UpdateError as exc:
+            results.append(exc)
+        self._bind(stub, "_deliver_update_check")(None, results.pop(), True)
         self.assertTrue(stub.notified, "kullaniciya hata gosterilmedi")
         self.assertIn("ag yok", stub.notified[0][1])
 

@@ -365,7 +365,8 @@ class TestF4DnsRecoveryState(unittest.TestCase):
 
     def test_adapter_missing_from_live_list_is_never_sent_to_netsh(self):
         backup = {
-            "Ethernet": {"ipv4": {"primary": "192.168.1.1", "dhcp": False}},
+            "Ethernet": {"ipv4": {"primary": "192.168.1.1", "dhcp": False},
+                         "ipv6": {"dhcp": True}},
             "HayaletAdaptor": {"ipv4": {"primary": "185.10.10.10", "dhcp": False}},
         }
         app, seen, complete = self._restore_with(backup, adapters=["Ethernet", "Wi-Fi"])
@@ -376,16 +377,13 @@ class TestF4DnsRecoveryState(unittest.TestCase):
         self.assertNotIn("Ethernet", app._dns_backup_mem)
         self.assertFalse(complete)
 
-    def test_malformed_values_are_sanitised_before_netsh(self):
+    def test_malformed_values_are_rejected_before_netsh(self):
         backup = {"Ethernet": {"ipv4": {"primary": "8.8.8.8 & calc.exe", "dhcp": False},
                                "ipv6": {"primary": "not-an-ip", "dhcp": False}}}
-        _, seen, complete = self._restore_with(backup, adapters=["Ethernet"])
-
-        self.assertEqual(len(seen), 1)
-        snap = seen[0][1]
-        self.assertIsNone(snap["ipv4"]["primary"])
-        self.assertIsNone(snap["ipv6"]["primary"])
-        self.assertTrue(complete)
+        app, seen, complete = self._restore_with(backup, adapters=["Ethernet"])
+        self.assertEqual(seen, [])
+        self.assertIn("Ethernet", app._dns_backup_mem)
+        self.assertFalse(complete)
 
     def test_valid_values_survive_sanitisation(self):
         backup = {"Ethernet": {"ipv4": {"primary": "192.168.1.1", "secondary": "9.9.9.9",
@@ -399,7 +397,8 @@ class TestF4DnsRecoveryState(unittest.TestCase):
         self.assertTrue(complete)
 
     def test_failed_adapter_is_kept_for_retry(self):
-        backup = {"Ethernet": {"ipv4": {"primary": "192.168.1.1", "dhcp": False}}}
+        backup = {"Ethernet": {"ipv4": {"primary": "192.168.1.1", "dhcp": False},
+                               "ipv6": {"dhcp": True}}}
         app, seen, complete = self._restore_with(
             backup, adapters=["Ethernet"], restore_result=(False, "netsh hatasi")
         )
@@ -407,18 +406,19 @@ class TestF4DnsRecoveryState(unittest.TestCase):
         self.assertIn("Ethernet", app._dns_backup_mem)   # tekrar deneme korundu
         self.assertFalse(complete)
 
-    def test_empty_adapter_name_is_dropped(self):
+    def test_empty_adapter_name_is_retained_without_mutation(self):
         backup = {"": {"ipv4": {"primary": "1.1.1.1", "dhcp": False}}}
         app, seen, complete = self._restore_with(backup, adapters=["Ethernet"])
         self.assertEqual(seen, [])
-        self.assertEqual(app._dns_backup_mem, {})
-        self.assertTrue(complete)
+        self.assertIn("", app._dns_backup_mem)
+        self.assertFalse(complete)
 
     # ── eski (guvenilmeyen) config yedegi ───────────────────────────────────
     def test_legacy_backup_is_not_applied_without_consent(self):
         app = self._stub()
         app._legacy_dns_backup = {"Ethernet": {"ipv4": {"primary": "185.10.10.10",
-                                                        "dhcp": False}}}
+                                                        "dhcp": False},
+                                               "ipv6": {"dhcp": True}}}
         app._ask = lambda *a: False       # kullanici "Hayir" diyor
         started = []
         with mock.patch.object(self.gui_app.threading, "Thread",
@@ -432,7 +432,8 @@ class TestF4DnsRecoveryState(unittest.TestCase):
     def test_legacy_backup_is_applied_only_after_consent(self):
         app = self._stub()
         app._legacy_dns_backup = {"Ethernet": {"ipv4": {"primary": "192.168.1.1",
-                                                        "dhcp": False}}}
+                                                        "dhcp": False},
+                                               "ipv6": {"dhcp": True}}}
         asked = []
         app._ask = lambda t, m: (asked.append(m), True)[1]
         # Onay verilince _set_dns_backup cagrilir; secure_store MOCK'LANMAZSA

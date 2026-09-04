@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import ssl
 import urllib.error
 import urllib.request
 from typing import Optional, Tuple
@@ -19,7 +20,9 @@ from core.secure_store import GuardedFile
 
 
 class UpdateError(RuntimeError):
-    pass
+    def __init__(self, message, *, retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def _version_parts(value: str) -> tuple[int, ...]:
@@ -54,7 +57,16 @@ def _request_json(url: str, timeout: int = 10) -> dict:
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             raise UpdateError(f"GitHub release bulunamadi: {GITHUB_REPO}") from exc
-        raise UpdateError(f"GitHub yaniti: HTTP {exc.code}") from exc
+        raise UpdateError(
+            f"GitHub yaniti: HTTP {exc.code}",
+            retryable=exc.code in {408, 429, 500, 502, 503, 504},
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise UpdateError(
+            str(exc), retryable=not isinstance(exc.reason, ssl.SSLCertVerificationError)
+        ) from exc
+    except (TimeoutError, ConnectionError) as exc:
+        raise UpdateError(str(exc), retryable=True) from exc
     except Exception as exc:
         raise UpdateError(str(exc)) from exc
 

@@ -4,8 +4,7 @@ tests/test_release_alignment.py
 Yayin oncesi surum hizalamasi. Repo kurali: APP_VERSION, Inno MyAppVersion,
 README rozeti ve uretilen `DPort-Setup-X.Y.exe` adi AYNI olmalidir.
 
-NOT: `packaging/` .gitignore'da oldugu icin temiz bir klonda bulunmayabilir;
-o dosyalara bagli kontroller dosya yoksa ATLANIR.
+Tarihsel surum notlari ve gercek ekran goruntusunun surum etiketi korunur.
 """
 import os
 import re
@@ -21,7 +20,7 @@ from core.app_info import APP_NAME, APP_VERSION      # noqa: E402
 from core.updater import _pick_setup_asset, is_newer_version  # noqa: E402
 
 # Bu surumun supersede ettigi, en son YAYINLANMIS surum.
-PREVIOUS_RELEASE = "3.12"
+PREVIOUS_RELEASE = "3.13"
 
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
 _README = os.path.join(_ROOT, "README.md")
@@ -39,8 +38,7 @@ class TestReleaseAlignment(unittest.TestCase):
                          f"beklenmeyen surum bicimi: {APP_VERSION!r}")
 
     def test_inno_version_matches_app_version(self):
-        if not os.path.isfile(_ISS):
-            self.skipTest("packaging/DPort.iss yok (gitignore'lu yerel dosya)")
+        self.assertTrue(os.path.isfile(_ISS), "Takip edilen installer kaynagi eksik")
         text = _read(_ISS)
         m = re.search(r'#define\s+MyAppVersion\s+"([^"]+)"', text)
         self.assertIsNotNone(m, "MyAppVersion bulunamadi")
@@ -62,7 +60,6 @@ class TestReleaseAlignment(unittest.TestCase):
         'Python 3.10+' gibi ALAKASIZ bir surum notu yanlis alarm verirdi."""
         targets = [
             os.path.join(_ROOT, "app", "core", "app_info.py"),
-            _README,
         ]
         if os.path.isfile(_ISS):
             targets.append(_ISS)
@@ -74,6 +71,11 @@ class TestReleaseAlignment(unittest.TestCase):
             self.assertIsNone(hit,
                               f"{os.path.basename(path)} icinde eski surum "
                               f"{PREVIOUS_RELEASE} kalmis: {hit.group(0) if hit else ''}")
+
+    def test_readme_installer_names_match_current_version(self):
+        names = re.findall(r"DPort-Setup-(\d+\.\d+)\.exe", _read(_README))
+        self.assertTrue(names)
+        self.assertTrue(all(version == APP_VERSION for version in names))
 
     def test_current_version_supersedes_previous_release(self):
         """Updater, bu surumu yayindaki son surumden YENI gormeli."""

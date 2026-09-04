@@ -48,7 +48,8 @@ version_info = VSVersionInfo(
 )
 
 datas = [(assets_dir, 'assets')]
-python_root = os.path.dirname(sys.executable)
+# Venv Scripts/ does not contain the base runtime DLLs.
+python_root = sys.base_prefix
 binaries = [
     (os.path.join(python_root, name), '.')
     for name in ('python3.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')

@@ -1,108 +1,112 @@
 """
-core/dns_manager.py
-netsh üzerinden DNS okuma/yazma/sıfırlama işlemleri.
+Locale-independent DNS snapshots and verified restoration.
+Registry access is read-only; netsh is the only mutation boundary.
 """
+import base64
+import ipaddress
+import json
 import subprocess
-import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
-# ---------------------------------------------------------------------------
-# DNS Okuma
-# ---------------------------------------------------------------------------
+class DnsSnapshotError(ValueError):
+    pass
+
+
+def normalize_snapshot(snapshot):
+    """Validate all families before writes; accept legacy primary/secondary."""
+    if not isinstance(snapshot, dict):
+        raise DnsSnapshotError("DNS yedegi gecersiz")
+    clean = {}
+    for family, version in (("ipv4", 4), ("ipv6", 6)):
+        data = snapshot.get(family)
+        if not isinstance(data, dict) or type(data.get("dhcp")) is not bool:
+            raise DnsSnapshotError(f"{family}: DNS kaynagi bilinmiyor")
+        addresses = data.get("servers")
+        if addresses is None:
+            addresses = [data[k] for k in ("primary", "secondary") if data.get(k)]
+        if not isinstance(addresses, list):
+            raise DnsSnapshotError(f"{family}: DNS listesi gecersiz")
+        servers = []
+        for address in addresses:
+            if not isinstance(address, str):
+                raise DnsSnapshotError(f"{family}: DNS adresi gecersiz")
+            try:
+                ip = ipaddress.ip_address(address)
+            except ValueError as exc:
+                raise DnsSnapshotError(f"{family}: DNS adresi gecersiz") from exc
+            if ip.version != version:
+                raise DnsSnapshotError(f"{family}: DNS adres ailesi uyusmuyor")
+            servers.append(str(ip))
+        if not data["dhcp"] and not servers:
+            raise DnsSnapshotError(f"{family}: statik DNS listesi bos")
+        clean[family] = {
+            "dhcp": data["dhcp"], "servers": servers,
+            "primary": servers[0] if servers else None,
+            "secondary": servers[1] if len(servers) > 1 else None,
+        }
+    if "interface_guid" in snapshot:
+        import uuid
+        try:
+            clean["interface_guid"] = str(uuid.UUID(snapshot["interface_guid"]))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise DnsSnapshotError("Adaptor kimligi gecersiz") from exc
+    return clean
+
 
 def get_dns(adapter_name: str) -> Dict:
+    """Read effective DNS via CIM and static source via per-interface NameServer.
+
+    Missing/inaccessible registry keys fail closed. Only a successfully opened
+    key with absent/empty NameServer means automatic. No registry writes.
     """
-    Bir adaptörün mevcut DNS ayarlarını döndürür.
-    Dönüş: {
-        'ipv4': {'primary': str|None, 'secondary': str|None, 'dhcp': bool},
-        'ipv6': {'primary': str|None, 'secondary': str|None, 'dhcp': bool}
-    }
-    """
-    result = {
-        "ipv4": {"primary": None, "secondary": None, "dhcp": True},
-        "ipv6": {"primary": None, "secondary": None, "dhcp": True},
-    }
-
-    # IPv4
+    encoded = base64.b64encode(adapter_name.encode("utf-8")).decode("ascii")
+    script = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$alias = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__ALIAS__'))
+$adapters = @(Get-NetAdapter -IncludeHidden | Where-Object { $_.Name -ceq $alias })
+if ($adapters.Count -ne 1) { throw 'Adapter not uniquely resolved' }
+$adapter = $adapters[0]
+$guid = ([guid]$adapter.InterfaceGuid).ToString()
+$result = @{interface_guid=$guid}
+foreach ($family in @(@('ipv4','Tcpip','IPv4'), @('ipv6','Tcpip6','IPv6'))) {
+    $path = 'SYSTEM\CurrentControlSet\Services\' + $family[1] + '\Parameters\Interfaces\{' + $guid + '}'
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($path, $false)
+    if ($null -eq $key) { throw 'DNS registry key unavailable' }
+    try {
+        $raw = $key.GetValue('NameServer', '')
+        if ($raw -isnot [string]) { throw 'Invalid NameServer type' }
+        $static = @($raw -split '[,;\s]+' | Where-Object { $_ })
+    } finally { $key.Dispose() }
+    $rows = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily $family[2])
+    if ($rows.Count -ne 1) { throw 'DNS family unavailable' }
+    $result[$family[0]] = @{dhcp=($static.Count -eq 0); servers=$static; effective=@($rows[0].ServerAddresses)}
+}
+$result | ConvertTo-Json -Depth 5 -Compress
+""".replace("__ALIAS__", encoded)
     try:
-        r = subprocess.run(
-            ["netsh", "interface", "ip", "show", "dnsservers", adapter_name],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=8,
-            creationflags=subprocess.CREATE_NO_WINDOW
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, encoding="utf-8", errors="strict",
+            timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        _parse_dns_output(r.stdout, result["ipv4"], ipv6=False)
-    except Exception as e:
-        print(f"[DNS] IPv4 okuma hatası ({adapter_name}): {e}")
-
-    # IPv6
-    try:
-        r = subprocess.run(
-            ["netsh", "interface", "ipv6", "show", "dnsservers", adapter_name],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=8,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        _parse_dns_output(r.stdout, result["ipv6"], ipv6=True)
-    except Exception as e:
-        print(f"[DNS] IPv6 okuma hatası ({adapter_name}): {e}")
-
-    return result
-
-
-def _parse_dns_output(output: str, dns_dict: dict, ipv6: bool = False):
-    """netsh dnsservers çıktısını ayrıştırır."""
-    ips: List[str] = []
-    dhcp = True
-    collecting = False  # "Servers configured…" satırından sonra IP topla
-
-    for line in output.splitlines():
-        lower = line.lower()
-
-        # DHCP/Static belirleme
-        if "dhcp" in lower and "server" in lower:
-            dhcp = True
-            collecting = True
-        elif "statically" in lower:
-            dhcp = False
-            collecting = True
-        elif collecting and line.strip() == "":
-            collecting = False  # Boş satır → IP bölgesi bitti
-
-        if not ipv6:
-            found = re.findall(
-                r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
-                r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
-                line,
-            )
-        else:
-            # IPv6: en az iki grup, ':' içersin
-            found = re.findall(
-                r"(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}",
-                line,
-            )
-            # Çok kısa veya sadece ':' içeren gürültüyü filtrele
-            found = [ip for ip in found if len(ip) >= 5 and ip.count(":") >= 2]
-
-        for ip in found:
-            if ip not in ips:
-                ips.append(ip)
-
-    dns_dict["dhcp"] = dhcp
-    dns_dict["primary"] = ips[0] if len(ips) > 0 else None
-    dns_dict["secondary"] = ips[1] if len(ips) > 1 else None
-
-
-# ---------------------------------------------------------------------------
-# DNS Yazma
-# ---------------------------------------------------------------------------
+        if result.returncode:
+            raise DnsSnapshotError("Windows DNS sorgusu basarisiz")
+        raw = json.loads(result.stdout.lstrip("\ufeff"))
+        clean = normalize_snapshot(raw)
+        for family in ("ipv4", "ipv6"):
+            effective = raw[family].get("effective")
+            if not isinstance(effective, list):
+                raise DnsSnapshotError("Etkin DNS listesi okunamadi")
+            effective = [str(ipaddress.ip_address(ip)) for ip in effective]
+            # Effective servers may be empty when IPv6 binding is disabled.
+            # Restore the configured source/list, not transient operational state.
+        return clean
+    except DnsSnapshotError:
+        raise
+    except Exception as exc:
+        raise DnsSnapshotError("DNS durumu guvenle okunamadi") from exc
 
 def set_dns(
     adapter_name: str,
@@ -151,18 +155,19 @@ def set_dns(
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         if r.returncode != 0:
-            # IPv6 olmayabilir, kritik hata sayma
-            print(f"[DNS] IPv6 birincil uyarı: {(r.stderr or r.stdout).strip()}")
+            errors.append(f"IPv6 birincil: {(r.stderr or r.stdout).strip()}")
 
         # --- IPv6 secondary ---
         if ipv6_secondary:
-            subprocess.run(
+            r = subprocess.run(
                 ["netsh", "interface", "ipv6", "add", "dnsservers",
                  adapter_name, ipv6_secondary, "index=2", "validate=no"],
                 capture_output=True, text=True,
                 encoding="utf-8", errors="ignore", timeout=12,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+            if r.returncode != 0:
+                errors.append(f"IPv6 ikincil: {(r.stderr or r.stdout).strip()}")
 
     if errors:
         return False, "\n".join(errors)
@@ -170,77 +175,55 @@ def set_dns(
 
 
 def restore_dns(adapter_name: str, snapshot: Dict) -> Tuple[bool, str]:
-    """Adaptoru, `snapshot` (get_dns ciktisi) ile kaydedilmis ORIJINAL durumuna
-    dondurur: onceden statik ise statik IP'leri, DHCP ise DHCP.
-
-    reset_to_dhcp'ten farki: kullanicinin kendi ozel/statik DNS'ini korur,
-    kaybettirmez."""
-    v4 = snapshot.get("ipv4", {}) if snapshot else {}
-    v6 = snapshot.get("ipv6", {}) if snapshot else {}
+    """Restore all ordered servers; success requires verified read-back."""
+    try:
+        wanted = normalize_snapshot(snapshot)
+        if wanted.get("interface_guid"):
+            current = get_dns(adapter_name)
+            if current.get("interface_guid") != wanted["interface_guid"]:
+                raise DnsSnapshotError("Adaptor kimligi degisti")
+    except Exception as exc:
+        return False, str(exc)
     errors = []
-
-    # --- IPv4 ---
-    if v4.get("dhcp", True) or not v4.get("primary"):
-        r = subprocess.run(
-            ["netsh", "interface", "ip", "set", "dnsservers", adapter_name, "dhcp"],
-            capture_output=True, text=True, encoding="utf-8", errors="ignore",
-            timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if r.returncode != 0:
-            errors.append(f"IPv4 DHCP: {(r.stderr or r.stdout).strip()}")
-    else:
-        r = subprocess.run(
-            ["netsh", "interface", "ip", "set", "dnsservers",
-             adapter_name, "static", v4["primary"]],
-            capture_output=True, text=True, encoding="utf-8", errors="ignore",
-            timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if r.returncode != 0:
-            errors.append(f"IPv4 statik: {(r.stderr or r.stdout).strip()}")
-        if v4.get("secondary"):
-            r = subprocess.run(
-                ["netsh", "interface", "ip", "add", "dnsservers",
-                 adapter_name, v4["secondary"], "index=2"],
-                capture_output=True, text=True, encoding="utf-8", errors="ignore",
-                timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if r.returncode != 0:
-                errors.append(f"IPv4 ikincil: {(r.stderr or r.stdout).strip()}")
-
-    # --- IPv6 (olmayabilir; hatalari kritik sayma, ama gorunur yap) ---
-    if v6.get("dhcp", True) or not v6.get("primary"):
-        r = subprocess.run(
-            ["netsh", "interface", "ipv6", "set", "dnsservers", adapter_name, "dhcp"],
-            capture_output=True, text=True, encoding="utf-8", errors="ignore",
-            timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if r.returncode != 0:
-            print(f"[DNS] IPv6 DHCP geri yukleme uyarisi ({adapter_name}): "
-                  f"{(r.stderr or r.stdout).strip()}")
-    else:
-        r = subprocess.run(
-            ["netsh", "interface", "ipv6", "set", "dnsservers",
-             adapter_name, "static", v6["primary"], "validate=no"],
-            capture_output=True, text=True, encoding="utf-8", errors="ignore",
-            timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if r.returncode != 0:
-            print(f"[DNS] IPv6 statik geri yukleme uyarisi ({adapter_name}): "
-                  f"{(r.stderr or r.stdout).strip()}")
-        if v6.get("secondary"):
-            r = subprocess.run(
-                ["netsh", "interface", "ipv6", "add", "dnsservers",
-                 adapter_name, v6["secondary"], "index=2", "validate=no"],
-                capture_output=True, text=True, encoding="utf-8", errors="ignore",
-                timeout=12, creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if r.returncode != 0:
-                print(f"[DNS] IPv6 ikincil geri yukleme uyarisi ({adapter_name}): "
-                      f"{(r.stderr or r.stdout).strip()}")
-
-    if errors:
-        return False, "\n".join(errors)
-    return True, "OK"
+    for family in ("ipv4", "ipv6"):
+        data = wanted[family]
+        prefix = ["netsh", "interface", family]
+        if data["dhcp"]:
+            commands = [prefix + ["set", "dnsservers", adapter_name, "dhcp"]]
+        else:
+            commands = [prefix + ["set", "dnsservers", adapter_name,
+                                  "static", data["servers"][0], "validate=no"]]
+            for index, address in enumerate(data["servers"][1:], 2):
+                commands.append(prefix + ["add", "dnsservers", adapter_name,
+                                         address, f"index={index}", "validate=no"])
+        for command in commands:
+            try:
+                result = subprocess.run(
+                    command, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=12,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if result.returncode:
+                    errors.append(f"{family}: {(result.stderr or result.stdout).strip()}")
+                    break
+            except Exception as exc:
+                errors.append(f"{family}: {exc}")
+                break
+    if not errors:
+        try:
+            actual = normalize_snapshot(get_dns(adapter_name))
+            for family in ("ipv4", "ipv6"):
+                expected = wanted[family]
+                observed = actual[family]
+                if expected["dhcp"] != observed["dhcp"] or (
+                    not expected["dhcp"] and expected["servers"] != observed["servers"]
+                ):
+                    errors.append(f"{family}: geri yukleme dogrulanamadi")
+            if wanted.get("interface_guid") and actual.get("interface_guid") != wanted["interface_guid"]:
+                errors.append("Adaptor kimligi degisti")
+        except Exception as exc:
+            errors.append(f"DNS geri okuma basarisiz: {exc}")
+    return (False, "\n".join(errors)) if errors else (True, "OK")
 
 
 def reset_to_dhcp(adapter_name: str) -> Tuple[bool, str]:

@@ -19,7 +19,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
 from core.adapter_manager import get_active_adapters, get_all_adapters
-from core.dns_manager import set_dns, restore_dns, get_dns
+from core.dns_manager import set_dns, restore_dns, get_dns, normalize_snapshot
 from core.config_manager import ConfigManager
 from core.discord_manager import (
     get_discord_update_status,
@@ -53,6 +53,7 @@ from core.app_info import (
     GITHUB_RELEASES_URL,
 )
 from core import secure_store
+from core.update_check import UpdateCheckController
 from core.updater import (
     UpdateError,
     check_latest_release,
@@ -387,6 +388,12 @@ class DPortApp(ctk.CTk):
         self._busy = False
         self._connecting = False    # "Discord'u Ac" akisi sirasinda hero "Baglaniyor..." kalir
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
+        self._update_download_active = False
+        self._update_checks = UpdateCheckController(
+            check=lambda: check_latest_release(self.VERSION),
+            schedule=self.after, cancel=self.after_cancel,
+            deliver=self._deliver_update_check, log=self.log_mgr.write,
+        )
         self._status_timer_id = None  # tek periyodik pano zinciri (after id)
         self._status_refreshing = False  # ayni anda tek yenileme thread'i
         self._status_refresh_pending = False  # meşgulken istenen son yenileme kaybolmasin
@@ -1217,10 +1224,22 @@ class DPortApp(ctk.CTk):
             if not adapters:
                 self._st(L["st_no_adapter"], RED)
                 return
-            self._backup_dns(adapters)
+            try:
+                self._backup_dns(adapters)
+            except Exception as exc:
+                self.log_mgr.write(f"DNS | yedekleme basarisiz, sisteme dokunulmadi | {exc}")
+                self._st(L["st_dns_backup_failed"], RED)
+                return
             for a in adapters:
-                ok, msg = set_dns(a["name"], DNS_V4[0], DNS_V4[1], DNS_V6[0], DNS_V6[1])
+                try:
+                    ok, msg = set_dns(a["name"], DNS_V4[0], DNS_V4[1], DNS_V6[0], DNS_V6[1])
+                except Exception as exc:
+                    ok, msg = False, str(exc)
                 self.log_mgr.write(f"DNS | {a['name']} | {'OK' if ok else msg}")
+                if not ok:
+                    self._restore_dns()
+                    self._st(L["st_dns_apply_failed"], RED)
+                    return
             self._flushdns()
 
             # 3) Engel asma yolunu ac (role + hosts)
@@ -1592,52 +1611,24 @@ class DPortApp(ctk.CTk):
                 "tutuluyor (cokme kurtarmasi devre disi)", level="WARN")
 
     def _backup_dns(self, adapters):
-        """DNS'i 1.1.1.1 yapmadan ONCE orijinal ayari (bir kez) yedekle.
-        Cokme-kurtarma: yedek zaten varsa uzerine YAZMAYIZ (gercek orijinal korunur),
-        boylece 'bizim degerimizi orijinal sanma' sorunu olmaz. Bu yuzden 1.1.1.1'i
-        normalde kendi tercihi olarak kullanan kullanicinin ayari da dogru yedeklenir."""
-        if self._get_dns_backup():
-            return
-        backup = {}
-        for a in adapters:
-            try:
-                backup[a["name"]] = get_dns(a["name"])
-            except Exception:
-                continue
-        if backup:
-            self._set_dns_backup(backup)
-            self.log_mgr.write(f"DNS | orijinal ayar yedeklendi ({len(backup)} adaptor)")
+        """Read/validate every new adapter before allowing any DNS mutation."""
+        backup = dict(self._get_dns_backup())
+        for adapter in adapters:
+            name = adapter["name"]
+            current = get_dns(name)
+            if name not in backup:
+                backup[name] = current
+            backup[name] = normalize_snapshot(backup[name])
+            saved_guid = backup[name].get("interface_guid")
+            if saved_guid and saved_guid != current.get("interface_guid"):
+                raise ValueError("Adaptor kimligi yedekle uyusmuyor")
+        self._set_dns_backup(backup)
+        self.log_mgr.write(f"DNS | orijinal ayar yedeklendi ({len(backup)} adaptor)")
 
     @staticmethod
     def _sanitize_dns_snapshot(snap):
-        """config'ten gelen (kullanici tarafindan degistirilebilen) DNS yedegini
-        guvenli hale getirir: yalnizca GECERLI IP degerleri korunur, gerisi None
-        olur (ilgili aile otomatik/DHCP'ye doner). Boylece yerel bir surec config'i
-        kurcalayip yonetici-yetkili netsh komutuna bicimsiz/cop deger sokamaz.
-        NOT: gecerli-bicimli ama kotu niyetli bir IP'yi TEK BASINA engellemez
-        (bunun icin yedegin korumali konumda saklanmasi gerekir); bu, cop/enjeksiyon
-        girdisine karsi katmanli bir savunmadir."""
-        import ipaddress
-
-        def _ip(v, want_v6):
-            if not v:
-                return None
-            try:
-                s = str(v).strip()
-                return s if ipaddress.ip_address(s).version == (6 if want_v6 else 4) else None
-            except Exception:
-                return None
-
-        src = snap if isinstance(snap, dict) else {}
-        clean = {}
-        for fam, v6 in (("ipv4", False), ("ipv6", True)):
-            f = src.get(fam) if isinstance(src.get(fam), dict) else {}
-            clean[fam] = {
-                "primary": _ip(f.get("primary"), v6),
-                "secondary": _ip(f.get("secondary"), v6),
-                "dhcp": bool(f.get("dhcp", True)),
-            }
-        return clean
+        # Never convert malformed or incomplete state into DHCP.
+        return normalize_snapshot(snap)
 
     @staticmethod
     def _live_adapter_names():
@@ -1674,15 +1665,15 @@ class DPortApp(ctk.CTk):
         live = self._live_adapter_names()
         for name, snap in backup.items():
             if not isinstance(name, str) or not name.strip():
-                remaining.pop(name, None)   # gecersiz adaptor adi -> at, netsh'e verme
+                self.log_mgr.write("DNS geri | gecersiz adaptor adi; yedek korundu")
                 continue
             if live is not None and name not in live:
                 # Sistemde boyle bir adaptor yok: netsh'e gonderme. Yedekte
                 # BIRAKILIR ki adaptor tekrar takildiginda geri yuklenebilsin.
                 self.log_mgr.write(f"DNS geri | {name} | atlandi (adaptor sistemde yok)")
                 continue
-            snap = self._sanitize_dns_snapshot(snap)
             try:
+                snap = self._sanitize_dns_snapshot(snap)
                 ok, msg = restore_dns(name, snap)
             except Exception as e:
                 ok, msg = False, str(e)
@@ -1892,37 +1883,38 @@ class DPortApp(ctk.CTk):
 
     # ─────────────────────────── Pencereler ───────────────────────────
     def _check_updates_on_start(self):
-        threading.Thread(target=self._run_update_check, args=(False,), daemon=True).start()
+        self._update_checks.request()
 
     def _check_update_clicked(self):
-        self._st(L["st_update_checking"], YELL)
-        threading.Thread(target=self._run_update_check, args=(True,), daemon=True).start()
-
-    def _run_update_check(self, notify_when_current: bool):
-        try:
-            info = check_latest_release(self.VERSION)
-        except UpdateError as exc:
-            # `exc` except blogunun SONUNDA SILINIR; lambda sonradan (Tk after ile)
-            # calistiginda serbest degiskene erisemez ve NameError atardi.
-            # Mesaji SIMDI metne cevir ve varsayilan argumanla BAGLA.
-            message = f"{L['update_failed']}\n\n{exc}"
-            if notify_when_current:
-                self.after(0, lambda m=message: self._notify(L["update_title"], m))
-                self.after(0, lambda: self._st(L["st_ready"], SUB))
+        if self._update_download_active:
             return
+        self._st(L["st_update_checking"], YELL)
+        self._update_checks.request(manual=True)
 
+    def _deliver_update_check(self, info, error, manual):
+        if not self._alive or self._update_download_active:
+            return
+        if error:
+            if manual:
+                self._notify(L["update_title"], f"{L['update_failed']}\n\n{error}")
+            if self._alive and not self._busy:
+                self._st(L["st_update_unavailable"], YELL)
+            return
         if info.get("available"):
-            version = info.get("version") or ""
-            if getattr(self, "_update_prompted_version", None) == version and not notify_when_current:
-                return
-            self._update_prompted_version = version
-            self.after(0, lambda: self._prompt_update(info))
-        elif notify_when_current:
-            self.after(0, lambda: self._notify(
-                L["update_title"],
-                L["update_current"].format(version=self.VERSION),
-            ))
-            self.after(0, lambda: self._st(L["st_ready"], SUB))
+            self._prompt_update(info)
+        elif manual:
+            self._notify(L["update_title"],
+                         L["update_current"].format(version=self.VERSION))
+            if self._alive and not self._busy:
+                self._st(L["st_ready"], SUB)
+
+    def _download_update_worker(self):
+        queued = False
+        try:
+            queued = self._download_and_launch_update(self._update_download_info)
+        finally:
+            if not queued:
+                self._update_download_active = False
 
     def _prompt_update(self, info: dict):
         version = info.get("version") or "?"
@@ -1939,7 +1931,13 @@ class DPortApp(ctk.CTk):
             L["update_available"].format(version=version, current=self.VERSION),
         ):
             self._st(L["st_update_downloading"], YELL)
-            threading.Thread(target=self._download_and_launch_update, args=(info,), daemon=True).start()
+            self._update_download_active = True
+            self._update_download_info = info
+            try:
+                threading.Thread(target=self._download_update_worker, daemon=True).start()
+            except Exception:
+                self._update_download_active = False
+                raise
 
     def _download_and_launch_update(self, info: dict):
         # F3: installer ARTIK kullanici-yazilabilir %APPDATA% altina indirilmez.
@@ -1968,7 +1966,7 @@ class DPortApp(ctk.CTk):
             self.after(0, lambda: self._st(L["st_ready"], SUB))
             return
 
-        def _launch():
+        def _launch_inner():
             if self._ask(L["update_title"], L["update_downloaded"]):
                 # TOCTOU: dosya, hash'i KILITLI HANDLE uzerinden yeniden
                 # hesaplanir ve handle ACIKKEN calistirilir. Handle FILE_SHARE_READ
@@ -1985,7 +1983,15 @@ class DPortApp(ctk.CTk):
             else:
                 self._st(L["st_ready"], SUB)
 
+        def _launch():
+            try:
+                if self._alive:
+                    _launch_inner()
+            finally:
+                self._update_download_active = False
+
         self.after(0, _launch)
+        return True
 
     def _purge_legacy_downloads(self):
         """Eski, KULLANICI-YAZILABILIR indirme klasorunde (%APPDATA%\\DPort\\updates)
@@ -2056,6 +2062,8 @@ class DPortApp(ctk.CTk):
     def destroy(self):
         # Tamamen kapanirken yonlendirmeyi geri al, roleyi durdur, IPC'yi + tepsiyi kapat.
         self._alive = False   # arka plan thread'leri artik Tk'ye dokunmasin
+        if hasattr(self, "_update_checks"):
+            self._update_checks.close()
         try:
             if self._status_timer_id is not None:
                 self.after_cancel(self._status_timer_id)

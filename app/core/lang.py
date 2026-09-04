@@ -62,6 +62,8 @@ TR = {
     "st_fail_failsafe": "Yol açılamadı (güvenlik görevi kurulamadı; hosts dosyasına dokunulmadı)",
     "st_fail_no_recovery": "DPort'un kurulu uygulama dosyası bulunamadı. Programı yeniden kurun.",
     "st_no_adapter":    "Aktif ağ adaptörü bulunamadı!",
+    "st_dns_backup_failed": "DNS yedeklenemedi; ağ ayarları değiştirilmedi.",
+    "st_dns_apply_failed": "DNS ayarlanamadı. Geri alma durumunu kontrol edin.",
     "st_not_found":     "Discord bulunamadı",
     "st_update_ok":     "Güncelleme kontrolü tamamlandı",
     "discord_ver_checking": "Kontrol ediliyor",
@@ -133,6 +135,7 @@ TR = {
     "update_verify_failed": "İndirilen güncelleme doğrulanamadı; güvenlik için çalıştırılmadı.",
     "update_staging_failed": "Güncelleme için korumalı indirme klasörü hazırlanamadı.\n\nGüvenlik gereği güncelleme, standart kullanıcının değiştirebileceği bir klasöre indirilmez. Kurulumu GitHub Releases sayfasından elle yapabilirsin.",
     "st_update_checking":"Güncelleme kontrol ediliyor...",
+    "st_update_unavailable":"Güncelleme kontrol edilemedi; daha sonra elle deneyebilirsiniz.",
     "st_update_downloading":"Güncelleme indiriliyor...",
 
     # İpuçları
@@ -217,6 +220,8 @@ EN = {
     "st_fail_failsafe": "Path failed (safety task could not be created; hosts file was left untouched)",
     "st_fail_no_recovery": "Installed DPort application was not found. Reinstall DPort.",
     "st_no_adapter":    "No active network adapter!",
+    "st_dns_backup_failed": "DNS backup failed; network settings were not changed.",
+    "st_dns_apply_failed": "DNS setup failed. Check the restore status.",
     "st_not_found":     "Discord not found",
     "st_update_ok":     "Update check complete",
     "discord_ver_checking": "Checking for updates",
@@ -280,6 +285,7 @@ EN = {
     "update_verify_failed": "The downloaded update could not be verified; it was not run for safety.",
     "update_staging_failed": "A protected download folder for the update could not be prepared.\n\nFor safety the update is never downloaded into a folder a standard user can modify. You can install it manually from the GitHub Releases page.",
     "st_update_checking":"Checking for updates...",
+    "st_update_unavailable":"Could not check for updates; try manually later.",
     "st_update_downloading":"Downloading update...",
 
     "tip_about":        "About",

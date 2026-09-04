@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.13-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.14-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
-### ⬇️ [**DPort v3.13'ü İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
+### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>İndirilecek dosya: `DPort-Setup-3.13.exe`</sub>
+<sub>Hazırlanan v3.14 dosyası (henüz yayımlanmadı; bağlantı son yayımlanan sürüme gider): `DPort-Setup-3.14.exe`</sub>
 
 </div>
 
@@ -18,7 +18,7 @@
 
 ## Arayüz
 
-Güncel v3.13 uygulamasının gerçek ekran görüntüsü:
+v3.13 uygulamasından gerçek ekran görüntüsü (v3.14 için yeni görsel henüz alınmadı):
 
 <p align="center">
   <img src="docs/images/dport-v3.13-main.jpg" alt="DPort v3.13 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
@@ -39,7 +39,7 @@ Tek bir durum düğmesi vardır: bağlantı kapalıyken **Bağlantıyı Etkinle�
 ## Üç adımda kullan
 
 **1. İndir ve kur**
-[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.13.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
+[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve ilgili `DPort-Setup` dosyasını çalıştır. Windows yönetici onayı isteyecek.
 
 **2. DPort'u aç**
 Masaüstü kısayolundan başlat. Tek pencerelik, sade bir arayüz açılır.
@@ -130,7 +130,17 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.13'te ne değişti?
+## v3.14'te ne değişti? (hazırlık)
+
+- **DNS yedekleme dil bağımsız hale getirildi.** DNS durumu güvenle okunamazsa ağ ayarları değiştirilmez.
+- **Tüm DNS adresleri sıralarıyla saklanır.** IPv4 ve IPv6 geri yüklemesi tekrar okunarak doğrulanır; hata veya eksik doğrulama varsa yedek korunur.
+- **IPv6 kapalı olan adaptörler için okuma düzeltildi.** Kaydedilmiş DNS ayarı ile o anda etkin olan adres listesi birbirine karıştırılmaz.
+- **Açılış güncelleme kontrolü güçlendirildi.** Geçici hatalarda 5 ve 15 saniye sonra tekrar denenir; toplam en fazla üç deneme yapılır ve sonuçlar loglanır.
+- **Güncelleme kontrollerinin çakışması önlendi.** Elle kontrol devam eden isteğe katılır; bekleyen tekrarlar program kapanınca iptal edilir.
+
+Geçerli eski DNS yedekleri desteklenir. Eski sürümün hiç kaydetmediği adresler sonradan geri oluşturulamaz; eksik veya bozuk yedekler DHCP varsayılarak uygulanmaz.
+
+## Önceki sürüm: v3.13
 
 Bu sürüm, DPort ile Discord'un açılışını birbirinden ayırıyor ve geri alma güvenliğini güçlendiriyor:
 
@@ -188,7 +198,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.13.exe`).
+**Version 3.14 is in preparation, not yet published. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.14.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 
