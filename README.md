@@ -10,7 +10,7 @@
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.16 test hazırlığında; henüz yayımlanmadı. Planlanan dosya: `DPort-Setup-3.16.exe`. İndirme bağlantısı son yayımlanan sürüme gider.</sub>
+<sub>v3.16 kurulum dosyası: `DPort-Setup-3.16.exe`</sub>
 
 </div>
 
@@ -18,7 +18,7 @@
 
 ## Arayüz
 
-v3.15 uygulamasından gerçek ekran görüntüsü (v3.16 için yeni görsel henüz alınmadı):
+v3.15 uygulamasından gerçek ekran görüntüsü (v3.16 arayüzü aynıdır):
 
 <p align="center">
   <img src="docs/images/dport-v3.15-main.png" alt="DPort v3.15 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
@@ -130,7 +130,7 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.16'da ne değişti? (test hazırlığı)
+## v3.16'da ne değişti?
 
 - Bağlantı pasifken açık kalan DPort'un doğrulanmış kurulu süreci, kurulum sırasında Restart Manager'ın 30 saniyelik beklemesine girmeden kapatılır ve kuruluma devam edilir.
 - Bağlantı aktifse güncelleme iptal edilir; kullanıcıdan önce **Varsayılana Dön** işlemini tamamlaması istenir. Kontrol, indirme öncesinde ve installer başlatılmadan hemen önce tekrarlanır.
@@ -213,7 +213,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.16 is being tested and is not published yet.** Planned installer: `DPort-Setup-3.16.exe`. Download the [latest published release](https://github.com/IzzmooPro/DPort/releases/latest).
+**Version 3.16. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.16.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 
