@@ -287,9 +287,24 @@ class TestVerifiedTarget(unittest.TestCase):
         self.assertEqual(self._run(self._all_checks_pass()),
                          r"c:\program files\dport\dport.exe")
 
-    def test_not_frozen_is_rejected(self):
+    def test_not_frozen_never_targets_the_running_script(self):
+        """Kaynak modunda hedef ASLA calisan (kullanici-yazilabilir) betik
+        olamaz. Yalnizca BAGIMSIZ kesfedilmis, dogrulanmis KURULU DPort.exe
+        kabul edilir; o da yoksa hedef yoktur."""
         patches = self._all_checks_pass()
         patches[0] = mock.patch.object(failsafe.sys, "frozen", False, create=True)
+        patches.append(mock.patch.object(failsafe.sys, "executable",
+                                         r"c:\repo\dport\app\main.py"))
+        # Kurulu exe VAR: yalnizca o kullanilir, betik degil.
+        self.assertEqual(self._run(patches), r"c:\program files\dport\dport.exe")
+
+    def test_not_frozen_without_installed_exe_has_no_target(self):
+        patches = self._all_checks_pass()
+        patches[0] = mock.patch.object(failsafe.sys, "frozen", False, create=True)
+        patches[5] = mock.patch.object(failsafe, "_location_is_acl_protected",
+                                       lambda p: False)
+        patches.append(mock.patch.object(failsafe, "_task_command",
+                                         lambda name=None: None))
         self.assertIsNone(self._run(patches))
 
     def test_reparse_point_in_chain_is_rejected(self):
@@ -339,10 +354,23 @@ class TestVerifiedTarget(unittest.TestCase):
             self.assertIsNone(failsafe.verified_failsafe_target())
             self.assertFalse(failsafe._exe_in_protected_location())
 
-    def test_source_mode_is_rejected_on_this_machine(self):
-        """Gercek kosum (kaynak modu): frozen degil -> hedef yok."""
-        self.assertIsNone(failsafe.verified_failsafe_target())
-        self.assertFalse(failsafe._exe_in_protected_location())
+    def test_source_mode_never_uses_the_running_script_on_this_machine(self):
+        """Kaynak modunda yalnizca bagimsiz, dogrulanmis kurulum hedef olabilir.
+
+        Bu makinede kurulu bir DPort.exe bulunabilir; o durum kaynak modunu
+        reddetmek degil, `sys.executable`/calisan betigi HIGHEST gorev hedefi
+        yapmamaktir. Test, kurulu uygulamanin varligina gore yanlis negatif
+        uretmeden bu siniri dogrular.
+        """
+        target = failsafe.verified_failsafe_target()
+        self.assertEqual(failsafe._exe_in_protected_location(), target is not None)
+        if target is not None:
+            self.assertEqual(os.path.basename(target).casefold(), "dport.exe")
+            self.assertNotEqual(
+                os.path.normcase(target), os.path.normcase(sys.executable))
+            self.assertTrue(any(
+                os.path.normcase(target).startswith(root + os.sep)
+                for root in failsafe._program_files_roots()))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -363,15 +391,6 @@ class TestTaskLifecycle(unittest.TestCase):
         for legacy in failsafe._LEGACY_TASKS:
             self.assertIn(legacy, sim.deleted_names())
         self.assertEqual(sim.existing, set(), "gorevler gercekte kaldirilmadi")
-
-    def test_sync_removes_task_when_unsafe(self):
-        sim = _SchtasksSim(existing=[failsafe.TASK_NAME])
-        with mock.patch.object(failsafe, "verified_failsafe_target", return_value=None), \
-             mock.patch.object(failsafe.subprocess, "run", sim):
-            self.assertFalse(failsafe.sync_logon_failsafe())
-        self.assertEqual(sim.created(), [])
-        self.assertTrue(sim.deleted())
-        self.assertNotIn(failsafe.TASK_NAME, sim.existing)
 
     def test_safe_location_creates_task_with_verified_path_only(self):
         verified = r"c:\program files\dport\dport.exe"
@@ -496,14 +515,18 @@ class TestInstallSurfacesFailures(unittest.TestCase):
                         "kaldirma hatasi gorunur degil")
         self.assertEqual(sim.created(), [])
 
-    def test_unsafe_target_successful_removal_reports_no_error(self):
+    def test_unsafe_target_successful_removal_reports_reason_not_failure(self):
+        """Kurulum yapilamadiginda GEREKCE gorunur olmali, ama bu bir KALDIRMA
+        hatasi gibi raporlanmamalidir (gorev gercekten silindi)."""
         sim = _SchtasksSim(existing=[failsafe.TASK_NAME],
                            registered=r"C:\Users\kurban\AppData\Local\DPort.exe")
         with mock.patch.object(failsafe, "verified_failsafe_target", return_value=None), \
              mock.patch.object(failsafe, "path_is_verified_install", return_value=None), \
              mock.patch.object(failsafe.subprocess, "run", sim):
             self.assertFalse(failsafe.install_logon_failsafe())
-        self.assertEqual(failsafe.last_failsafe_error(), "")
+        err = failsafe.last_failsafe_error()
+        self.assertTrue(err, "kurulmama gerekcesi hic bildirilmedi")
+        self.assertNotIn("kaldirilamadi", err)
         self.assertNotIn(failsafe.TASK_NAME, sim.existing)
 
     def test_unsafe_current_exe_removes_task_pointing_at_writable_path(self):
@@ -527,7 +550,7 @@ class TestInstallSurfacesFailures(unittest.TestCase):
             self.assertFalse(failsafe.install_logon_failsafe())
         self.assertEqual(sim.deleted(), [], "mesru gorev gereksiz yere silindi")
         self.assertIn(failsafe.TASK_NAME, sim.existing)
-        self.assertEqual(failsafe.last_failsafe_error(), "")
+        self.assertNotIn("kaldirilamadi", failsafe.last_failsafe_error())
 
     def test_create_failure_is_reported(self):
         sim = _SchtasksSim(create_rc=1)
@@ -571,143 +594,10 @@ class TestInstallSurfacesFailures(unittest.TestCase):
         self.assertIn("SILINEMEDI", failsafe.last_failsafe_error())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Uygulama BASLANGICI senkronizasyonu tetiklemeli
-# ═══════════════════════════════════════════════════════════════════════════
-class TestStartupSynchronisation(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        from gui import app as gui_app   # customtkinter gerektirir
-        cls.gui_app = gui_app
-
-    def _patches(self, sync):
-        g = self.gui_app
-        return [
-            mock.patch.object(g, "sync_logon_failsafe", sync),
-            mock.patch.object(g, "remove_hosts_redirect", lambda: True),
-            mock.patch.object(g.secure_store, "load_dns_backup", return_value={}),
-            mock.patch.object(g.secure_store, "save_dns_backup", return_value=True),
-            mock.patch.object(g.DPortApp, "_flushdns", lambda self: None),
-            mock.patch.object(g.DPortApp, "_apply_icon", lambda self: None),
-            mock.patch.object(g.DPortApp, "_start_ipc", lambda self: None),
-            mock.patch.object(g.DPortApp, "_watchdog_loop", lambda self: None),
-            mock.patch.object(g.DPortApp, "_status_tick", lambda self: None),
-            mock.patch.object(g.DPortApp, "_uptime_tick", lambda self: None),
-            mock.patch.object(g.DPortApp, "_check_updates_on_start", lambda self: None),
-            mock.patch.object(g.DPortApp, "_purge_legacy_downloads", lambda self: None),
-            mock.patch.object(g.DPortApp, "_offer_legacy_dns_restore", lambda self: None),
-        ]
-
-    @staticmethod
-    def _destroy_quietly(app):
-        """Pencereyi kapatmadan ONCE bekleyen tum Tk 'after' isini iptal eder.
-
-        Bu YALNIZCA TEST YASAM DONGUSUDUR. Gurultunun kaynagi CustomTkinter'in
-        kendi zamanlayicilaridir (ScalingTracker.check_dpi_scaling ~100 ms'de
-        bir, CTk._windows_set_titlebar_icon 200 ms). Uretimde pencere kapaninca
-        surec de sonlandigi ve paketlenmis exe konsolsuz oldugu icin bunlar
-        yuzeye cikmaz; bu yuzden URETIM KODU test ciktisi ugruna DEGISTIRILMEDI.
-        Testte ise pencere milisaniyeler icinde yok edildigi icin sirada kalan
-        callback'ler "invalid command name" yaziyordu."""
-        try:
-            pending = app.tk.splitlist(app.tk.call("after", "info"))
-        except Exception:
-            pending = ()
-        for after_id in pending:
-            try:
-                app.after_cancel(after_id)
-            except Exception:
-                pass
-        try:
-            app.update_idletasks()
-        except Exception:
-            pass
-        try:
-            app.destroy()
-        except Exception:
-            pass
-        try:
-            app.update()          # destroy sonrasi kuyrugu bosalt
-        except Exception:
-            pass
-
-    def _run_with_app(self, sync, body=None):
-        started = [p.start() for p in self._patches(sync)]
-        del started
-        app = None
-        try:
-            app = self.gui_app.DPortApp()
-            if body:
-                body(app)
-        finally:
-            if app is not None:
-                self._destroy_quietly(app)
-            mock.patch.stopall()
-
-    def test_startup_synchronises_failsafe_before_any_user_action(self):
-        """Baslangicta, HICBIR dugmeye basilmadan senkronizasyon calisir."""
-        sync = mock.MagicMock(return_value=True)
-        seen = {}
-
-        def _body(app):
-            # __init__ DONMEDEN once cagrilmis olmali (arka plana ertelenmemis):
-            # burada henuz mainloop/update calismadi.
-            seen["count"] = sync.call_count
-
-        self._run_with_app(sync, _body)
-        self.assertEqual(seen.get("count"), 1,
-                         "sync_logon_failsafe baslangicta senkron cagrilmadi")
-
-    def test_startup_sync_is_not_repeated_by_connect_flow(self):
-        """Ayni baslangicta ikinci kez senkronize EDILMEZ."""
-        sync = mock.MagicMock(return_value=True)
-        seen = {}
-
-        def _body(app):
-            app._ensure_failsafe()      # "Discord'u Ac" akisindaki cagri
-            app._ensure_failsafe()
-            seen["count"] = sync.call_count
-
-        self._run_with_app(sync, _body)
-        self.assertEqual(seen.get("count"), 1, "gereksiz ikinci senkronizasyon")
-
-    def test_failed_sync_is_retryable(self):
-        """Senkronizasyon ISTISNA ile kesilirse bayrak isaretlenmez."""
-        sync = mock.MagicMock(side_effect=RuntimeError("gecici hata"))
-        seen = {}
-
-        def _body(app):
-            app._ensure_failsafe()
-            seen["count"] = sync.call_count
-            seen["flag"] = app._failsafe_synced
-
-        self._run_with_app(sync, _body)
-        self.assertEqual(seen.get("count"), 2, "istisna sonrasi yeniden denenmedi")
-        self.assertFalse(seen.get("flag"))
-
-    def test_removal_failure_is_logged_not_swallowed(self):
-        """Eski gorev kaldirilamazsa mesaj LOG'a yazilir (sessizce yutulmaz)."""
-        sync = mock.MagicMock(return_value=False)
-        seen = {}
-
-        def _body(app):
-            seen["lines"] = list(app.log_mgr.lines) if hasattr(app.log_mgr, "lines") else None
-
-        with mock.patch.object(self.gui_app, "last_failsafe_error",
-                               return_value="GUVENLIK: 'DPortHostsFailsafe' SILINEMEDI"):
-            written = []
-            original = self.gui_app.LogManager.write
-
-            def _capture(self_log, message):
-                written.append(message)
-                return original(self_log, message)
-
-            with mock.patch.object(self.gui_app.LogManager, "write", _capture):
-                self._run_with_app(sync, _body)
-
-        self.assertTrue(any("FAILSAFE" in m and "SILINEMEDI" in m for m in written),
-                        f"guvenlik hatasi loglanmadi: {written}")
+# NOT: Eski "TestStartupSynchronisation" sinifi KALDIRILDI. Acilista
+# kosulsuz gorev kurulmasini bekliyordu; yeni yasam dongusunde acilis
+# gorev KURMAZ (yalnizca hosts temizligi dogrulanirsa KALDIRIR).
+# Yerine: tests/test_failsafe_lifecycle.py :: TestStartupDoesNotCreateTask
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -766,103 +656,11 @@ class TestNoUnsafeTaskSurvivesFailure(unittest.TestCase):
         self.assertIn("GUVENLIK", failsafe.last_failsafe_error())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  --sync-failsafe BAKIM MODU (installer bunu calistirir)
-# ═══════════════════════════════════════════════════════════════════════════
-_HARNESS = r'''
-import os, sys, types, runpy
-
-APP, MODE, FLAG = sys.argv[1], sys.argv[2], sys.argv[3]
-sys.path.insert(0, APP)
-
-# Bakim modu GUI ACMAMALI ve DNS/hosts koduna DOKUNMAMALI: bu modullerin
-# YUKLENMESI bile hata sayilir.
-BANNED = ("customtkinter", "tkinter", "gui.app", "gui",
-          "core.discord_unblock", "core.dns_manager", "core.adapter_manager",
-          "core.discord_manager")
-
-class _Guard:
-    def find_spec(self, name, path=None, target=None):
-        if name in BANNED:
-            raise AssertionError("BAKIM MODU YASAK MODULU YUKLEDI: " + name)
-        return None
-
-sys.meta_path.insert(0, _Guard())
-
-import core  # paket (bos __init__)
-fake = types.ModuleType("core.failsafe")
-if MODE == "ok":
-    fake.sync_logon_failsafe = lambda: True
-    fake.last_failsafe_error = lambda: ""
-elif MODE == "clean":
-    fake.sync_logon_failsafe = lambda: False
-    fake.last_failsafe_error = lambda: ""
-elif MODE == "fail":
-    fake.sync_logon_failsafe = lambda: False
-    fake.last_failsafe_error = lambda: "GUVENLIK: gorev silinemedi"
-elif MODE == "boom":
-    def _boom():
-        raise RuntimeError("beklenmeyen")
-    fake.sync_logon_failsafe = _boom
-    fake.last_failsafe_error = lambda: ""
-sys.modules["core.failsafe"] = fake
-
-sys.argv = ["main.py", FLAG]
-runpy.run_path(os.path.join(APP, "main.py"), run_name="__main__")
-'''
-
-
-class TestMaintenanceMode(unittest.TestCase):
-    """`DPort.exe --sync-failsafe` — installer'in cagirdigi bakim modu.
-
-    GERCEK schtasks CALISTIRILMAZ: core.failsafe sahte bir modulle degistirilir.
-    GUI / DNS / hosts modullerinin yuklenmesi bile hata sayilir."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.harness = os.path.join(tempfile.mkdtemp(), "harness.py")
-        with open(cls.harness, "w", encoding="utf-8") as f:
-            f.write(_HARNESS)
-        cls.app_dir = _APP
-
-    def _run(self, mode, flag="--sync-failsafe"):
-        return subprocess.run([sys.executable, self.harness, self.app_dir, mode, flag],
-                              capture_output=True, text=True, timeout=60)
-
-    def test_exit_code_zero_when_task_installed(self):
-        r = self._run("ok")
-        self.assertEqual(r.returncode, 0, r.stderr)
-
-    def test_exit_code_two_when_no_safe_target_but_clean(self):
-        r = self._run("clean")
-        self.assertEqual(r.returncode, 2, r.stderr)
-
-    def test_exit_code_three_when_removal_failed(self):
-        r = self._run("fail")
-        self.assertEqual(r.returncode, 3, r.stderr)
-
-    def test_exit_code_three_on_unexpected_exception(self):
-        r = self._run("boom")
-        self.assertEqual(r.returncode, 3, r.stderr)
-
-    def test_no_gui_dns_or_hosts_module_is_loaded(self):
-        """Yasakli modul yuklenirse harness AssertionError ile patlar."""
-        for mode in ("ok", "clean", "fail"):
-            r = self._run(mode)
-            self.assertNotIn("YASAK MODULU", r.stderr,
-                             f"{mode}: bakim modu yasak modul yukledi\n{r.stderr}")
-
-    def test_maintenance_flag_does_not_start_single_instance_or_gui(self):
-        """Bakim modu tek-ornek IPC'sine baglanmaz ve pencere acmaz."""
-        r = self._run("ok")
-        self.assertEqual(r.returncode, 0)
-        self.assertEqual(r.stdout.strip(), "", f"beklenmeyen cikti: {r.stdout!r}")
-
-    # NOT: "bayrak yokken bakim modu calismasin" testi BILINCLI olarak yok.
-    # Bayraksiz main.py, tek-ornek IPC'sine baglanmayi ve ardindan elevate()
-    # ile UAC istemi acmayi dener; bir birim testi kullanicinin ekranina UAC
-    # kutusu cikarmamalidir. Bayrak kontrolu tek satirlik ve diger testlerde
-    # dolayli olarak kapsaniyor (yanlis bayrakla 0/2/3 kodlari uretilmez).
+# NOT: "--sync-failsafe" BAKIM MODU testleri KALDIRILDI. Bayrak ve onu
+# calistiran installer adimi tamamen silindi (gorev artik kurulum
+# tarafindan olusturulmuyor). Ayni koruma — bakim modunun GUI/DNS/relay
+# yuklememesi — artik gecerli olan mod icin dogrulaniyor:
+# tests/test_failsafe_lifecycle.py :: TestCleanupHostsMode
 
 
 if __name__ == "__main__":

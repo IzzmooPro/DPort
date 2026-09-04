@@ -3,6 +3,7 @@ import inspect
 import sys
 import tempfile
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -206,6 +207,63 @@ class TestStaleStatusRefresh(unittest.TestCase):
         self.assertFalse(app._status_refresh_pending)
 
 
+class TestConnectionButtonState(unittest.TestCase):
+    def setUp(self):
+        set_lang("tr")
+        self.app = gui_app.DPortApp.__new__(gui_app.DPortApp)
+        self.app.btn_open = mock.Mock()
+
+    def test_active_connection_turns_button_into_restore_action(self):
+        self.app._set_connection_button(True)
+
+        self.app.btn_open.configure.assert_called_once_with(
+            state="normal", text=L["btn_restore"],
+            fg_color="transparent", hover_color=gui_app.HOVER,
+            text_color=gui_app.SUB, border_color=gui_app.BORDER)
+        self.assertEqual(self.app._connection_action_mode, "restore")
+
+    def test_inactive_clean_connection_shows_activation_action(self):
+        self.app._set_connection_button(False)
+
+        self.app.btn_open.configure.assert_called_once_with(
+            state="normal", text=L["btn_activate"],
+            fg_color=gui_app.BLURPLE, hover_color=gui_app.BLURPLE_H,
+            text_color=gui_app.WHITE, border_color=gui_app.BLURPLE)
+        self.assertEqual(self.app._connection_action_mode, "activate")
+
+    def test_inactive_connection_with_backup_keeps_restore_action(self):
+        self.app._set_connection_button(False, can_restore=True)
+
+        self.assertEqual(self.app._connection_action_mode, "restore")
+        self.assertEqual(
+            self.app.btn_open.configure.call_args.kwargs["text"], L["btn_restore"])
+
+    def test_single_action_button_spans_the_full_row(self):
+        source = inspect.getsource(gui_app.DPortApp._build)
+        self.assertIn('btnrow.grid_columnconfigure(0, weight=1)', source)
+        self.assertNotIn("self.btn_restore", source)
+        self.assertIn('self.btn_open.grid(row=0, column=0, sticky="ew")', source)
+
+    def test_full_width_action_uses_normal_font(self):
+        source = inspect.getsource(gui_app.DPortApp._build)
+        button_source = source[source.index("self.btn_open ="):source.index("# Footer")]
+        self.assertIn('font=_f(13, "bold")', button_source)
+
+    def test_dispatches_to_the_action_displayed_on_button(self):
+        self.app._busy = False
+        self.app._activate_connection = mock.Mock()
+        self.app._restore_normal = mock.Mock()
+
+        self.app._connection_action_mode = "activate"
+        self.app._handle_connection_action()
+        self.app._activate_connection.assert_called_once_with()
+        self.app._restore_normal.assert_not_called()
+
+        self.app._connection_action_mode = "restore"
+        self.app._handle_connection_action()
+        self.app._restore_normal.assert_called_once_with()
+
+
 class TestModalVisibility(unittest.TestCase):
     def test_update_modal_is_hidden_until_fully_prepared(self):
         source = inspect.getsource(gui_app._ModalDialog.__init__)
@@ -220,6 +278,63 @@ class TestModalVisibility(unittest.TestCase):
         self.assertLess(source.index("self.transient(app)"), source.index("self.deiconify()"))
         self.assertLess(source.index("self.geometry("), source.index("self.deiconify()"))
         self.assertLess(source.index("self.deiconify()"), source.index("self.grab_set()"))
+
+
+class TestStartupAntivirusNotice(unittest.TestCase):
+    class _Config:
+        def __init__(self, hidden=False):
+            self.hidden = hidden
+            self.saved = []
+
+        def get(self, key, default=None):
+            return self.hidden if key == "hide_antivirus_notice" else default
+
+        def set(self, key, value):
+            self.saved.append((key, value))
+
+    def _app(self, hidden=False):
+        app = gui_app.DPortApp.__new__(gui_app.DPortApp)
+        app.cfg = self._Config(hidden)
+        app._alive = True
+        app.wait_window = mock.Mock()
+        app.after = mock.Mock()
+        app._offer_legacy_dns_restore = mock.Mock()
+        app._check_updates_on_start = mock.Mock()
+        return app
+
+    def test_notice_is_shown_before_other_startup_prompts(self):
+        app = self._app()
+        dialog = types.SimpleNamespace(result=True, option_selected=False)
+        with mock.patch.object(gui_app, "_ModalDialog", return_value=dialog) as modal:
+            app._run_startup_prompts()
+
+        modal.assert_called_once()
+        app.wait_window.assert_called_once_with(dialog)
+        self.assertEqual(app.after.call_args_list, [
+            mock.call(500, app._offer_legacy_dns_restore),
+            mock.call(1400, app._check_updates_on_start),
+        ])
+
+    def test_dont_show_again_is_saved_only_after_confirmation(self):
+        app = self._app()
+        dialog = types.SimpleNamespace(result=True, option_selected=True)
+        with mock.patch.object(gui_app, "_ModalDialog", return_value=dialog):
+            app._run_startup_prompts()
+
+        self.assertEqual(app.cfg.saved, [("hide_antivirus_notice", True)])
+
+    def test_hidden_notice_is_skipped_but_startup_continues(self):
+        app = self._app(hidden=True)
+        with mock.patch.object(gui_app, "_ModalDialog") as modal:
+            app._run_startup_prompts()
+
+        modal.assert_not_called()
+        app.wait_window.assert_not_called()
+        self.assertEqual(len(app.after.call_args_list), 2)
+
+    def test_notice_explains_manual_discord_launch(self):
+        self.assertIn("artık Discord'u otomatik açmaz", L["av_notice_msg"])
+        self.assertIn("kendi kısayolundan açın", L["av_notice_msg"])
 
 
 if __name__ == "__main__":

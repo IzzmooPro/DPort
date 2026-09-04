@@ -97,34 +97,55 @@ if __name__ == "__main__":
     if base_dir not in sys.path:
         sys.path.insert(0, base_dir)
 
-    # Güvenlik ağı: logon görevi bu bayrakla çağırır. Sadece hosts bloğunu
-    # temizle ve çık (arayüz açma). Görev yüksek yetkiyle çalıştığı için yazma izni var.
-    if "--cleanup-hosts" in sys.argv:
-        try:
-            from core.discord_unblock import remove_hosts_redirect
-            remove_hosts_redirect()
-        except Exception:
-            pass
-        sys.exit(0)
-
-    # BAKIM MODU: kurulum/güncelleme sonrası installer bu bayrakla çağırır.
-    # YALNIZCA failsafe görev senkronizasyonu yapar: arayüz AÇMAZ, DNS'e ve
-    # hosts'a DOKUNMAZ, tek örnek kilidi almaz. Amaç, kullanıcı yeni sürümü hiç
-    # çalıştırmasa bile eski sürümden kalmış güvensiz DPortHostsFailsafe
-    # görevinin ayakta kalmamasıdır.
+    # Güvenlik ağı: logon görevi bu bayrakla çağırır. YALNIZCA işaretli
+    # DPort/legacy hosts bloğunu temizler ve görevin kendisini düşürür; arayüz
+    # AÇMAZ, DNS'e dokunmaz, röle/Discord/tek-örnek kodunu yüklemez.
     #
-    # Çıkış kodları (installer bunlara bakar):
-    #   0 = görev doğrulanmış hedefle kuruldu
-    #   2 = güvenli hedef yok, ama eski görevler temiz (güvenlik sorunu YOK)
-    #   3 = BAŞARISIZ: eski görev kaldırılamadı veya beklenmeyen hata
-    if "--sync-failsafe" in sys.argv:
-        code = 3
+    # Görev kalıcı değildir: hosts yönlendirmesi gerçekten kalktığında bu göreve
+    # de gerek kalmaz, bu yüzden kendini kaldırır. Temizlik doğrulanamazsa görev
+    # KORUNUR ki bir sonraki logon'da yeniden denensin.
+    #
+    # Çıkış kodları:
+    #   0 = hosts temizliği DOĞRULANDI ve görev(ler) uzlaştırıldı (kaldırıldı)
+    #   1 = hosts temizlenemedi -> göreve DOKUNULMADI (yeniden denenecek)
+    #   2 = hosts temizlendi fakat görev KONTROLLÜ biçimde kaldırılamadı
+    #   3 = beklenmeyen istisna (hangi adımda olursa olsun)
+    if "--cleanup-hosts" in sys.argv:
+        def _note(text):
+            """Konsolsuz derlemede stdout olmayabilir; sessizce geç."""
+            try:
+                if sys.stdout is not None:
+                    print(text, flush=True)
+            except Exception:
+                pass
+
         try:
-            from core.failsafe import sync_logon_failsafe, last_failsafe_error
-            code = 0 if sync_logon_failsafe() else (3 if last_failsafe_error() else 2)
-        except Exception:
-            code = 3
-        sys.exit(code)
+            try:
+                from core.discord_unblock import remove_hosts_redirect
+                hosts_cleared = bool(remove_hosts_redirect())
+            except Exception as exc:
+                # hosts durumu BİLİNMİYOR: yönlendirme duruyor olabilir, bu
+                # yüzden göreve dokunulmaz (kod 1, kod 3 değil).
+                _note(f"HOSTS_CLEANUP_ERROR {exc} TASK_NOT_TOUCHED")
+                sys.exit(1)
+
+            if not hosts_cleared:
+                _note("HOSTS_CLEANUP_FAILED TASK_NOT_TOUCHED")
+                sys.exit(1)
+
+            # Görev yaşam döngüsünün TEK karar noktası; burada hosts temizliği
+            # doğrulandığı için sonuç "tüm görev adlarını kaldır"dır.
+            from core.failsafe import reconcile_failsafe_task, last_failsafe_error
+            if reconcile_failsafe_task(True):
+                _note("HOSTS_CLEANED TASK_REMOVED")
+                sys.exit(0)
+            _note(f"HOSTS_CLEANED TASK_REMOVE_FAILED {last_failsafe_error()}")
+            sys.exit(2)
+        except SystemExit:
+            raise
+        except BaseException as exc:
+            _note(f"CLEANUP_UNEXPECTED_ERROR {exc}")
+            sys.exit(3)
 
     # 1) UAC'siz ön-kontrol: uygulama zaten açıksa onu öne getir ve çık.
     if signal_existing():

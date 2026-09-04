@@ -1,8 +1,9 @@
 """
 gui/app.py
 Discord Baglanti — Turkiye'deki Discord SNI/DPI engelini asan, Discord'a ozel
-tek pencerelik arac. Tek tik: DNS (1.1.1.1) + yerel parcalayici role + guncelleme
-+ acilis. Durum panosu ile canli geri bildirim.
+tek pencerelik arac. Tek tik: DNS (1.1.1.1) + yerel parcalayici role.
+DPort Discord'u baslatmaz; kullanici Discord'u diledigi zaman kendi acar.
+Durum panosu ile canli geri bildirim.
 """
 import os
 import sys
@@ -18,16 +19,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
 from core.adapter_manager import get_active_adapters, get_all_adapters
-from core.dns_manager import set_dns, reset_to_dhcp, restore_dns, get_dns
+from core.dns_manager import set_dns, restore_dns, get_dns
 from core.config_manager import ConfigManager
 from core.discord_manager import (
     get_discord_update_status,
-    launch_discord,
     discord_restart_required,
     installed_discord_version,
     running_discord_version,
-    is_discord_running,
-    close_discord_processes,
 )
 from core.discord_unblock import (
     DiscordUnblocker,
@@ -38,7 +36,12 @@ from core.discord_unblock import (
     last_hosts_winerror,
     last_hosts_retry_info,
 )
-from core.failsafe import sync_logon_failsafe, last_failsafe_error
+from core.failsafe import (
+    install_logon_failsafe,
+    reconcile_failsafe_task,
+    verified_failsafe_target,
+    last_failsafe_error,
+)
 from core.log_manager import LogManager
 from core.startup_manager import enable_startup, disable_startup, is_startup_enabled
 from core.lang import L, set_lang, current_lang
@@ -72,6 +75,16 @@ TEXT          = "#f3f6fb"   # ana metin
 SUB           = "#cbd5e1"   # ikincil metin
 MUTED         = "#94a3b8"   # soluk / etiket
 DISABLED      = "#697586"   # pasif (disabled) metin
+
+
+def _source_dev_mode() -> bool:
+    """Calistir.bat ile acilan yerel kaynak testini ayirt eder.
+
+    Paketlenmis uygulama bu bayragi bilerek yok sayar: uretimde hosts yazmadan
+    once dogrulanmis kurulu kurtarma hedefi her zaman zorunludur.
+    """
+    return (not getattr(sys, "frozen", False)
+            and "--source-dev" in sys.argv)
 BLURPLE       = "#5865f2"   # ana aksan (yalniz ana eylem/odak)
 BLURPLE_H     = "#4752c4"   # hover
 BLURPLE_L     = "#aeb8ff"   # aksan / link metni
@@ -317,15 +330,11 @@ IPC_REQUEST = IPC_MAGIC + b" SHOW\n"
 IPC_ACK = IPC_MAGIC + b" OK\n"
 IPC_TIMEOUT = 1.5
 
-# Discord updater izleme sinirlari. Sabit 90 sn'lik tek pencere, YAVAS ama
-# CALISAN bir guncellemeyi (buyuk indirme / modul kurulumu) yanlislikla
-# basarisiz gosteriyordu. Artik olcut "ne kadar surdu" degil "hala ilerliyor mu":
-#   IDLE : son DEGISIKLIKTEN beri gecen sure — asilirsa izleme birakilir
-#   HARD : toplam ust sinir — sonsuz bekleme olusmaz
+# Eski updater yordamları artık GUI akışından çağrılmıyor; bağımsız çekirdek
+# testleriyle uyumluluk için sabitleri burada tutuyoruz.
 UPD_IDLE_TIMEOUT = 90
 UPD_HARD_LIMIT = 600
 UPD_POLL = 5
-
 
 def serve_ipc_connection(conn) -> bool:
     """Tek bir IPC baglantisini isler.
@@ -375,15 +384,6 @@ class DPortApp(ctk.CTk):
             enabled=self.cfg.get("log_enabled", True),
         )
 
-        # Failsafe gorev senkronizasyonu: MUMKUN OLAN EN ERKEN noktada ve
-        # SENKRON calisir (arka plana ERTELENMEZ). Onceki bir surumden kalmis,
-        # yazilabilir bir hedefi gosteren HIGHEST gorev burada kaldirilir;
-        # ertelenirse o gorev bu arada elle tetiklenebilirdi. Oturum basina
-        # bir kez yapilir (bkz. _ensure_failsafe); "Discord'u Ac" akisindaki
-        # cagri bu yuzden tekrar etmez.
-        self._failsafe_synced = False
-        self._ensure_failsafe()
-
         self._busy = False
         self._connecting = False    # "Discord'u Ac" akisi sirasinda hero "Baglaniyor..." kalir
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
@@ -394,9 +394,6 @@ class DPortApp(ctk.CTk):
         self._tray = None           # aktif tepsi ikonu (cift ikon onlemek icin)
         self._panel = None          # ayni anda tek alt pencere (ayarlar/log/yardim/hakkinda)
         self._active_since = None    # yol kesintisiz ne zamandir aktif (aktif sure)
-        # Discord updater gosterimi: hizli ara asamalar goz kirpmasin; yalniz
-        # kisa kontrol bilgisi, kalici yeniden-baslatma geregi ve dogrulanmis
-        # "Guncellendi" sonucu surum kartinda gosterilir.
         self._discord_update_phase = ""
         self._discord_update_notice_until = 0.0
         # DNS kurtarma yedegi ARTIK config.json'da tutulmaz (F4): kullanici-
@@ -412,10 +409,18 @@ class DPortApp(ctk.CTk):
 
         # Onceki oturumdan (cokme/zorla kapatma) kalmis olabilecek hosts
         # yonlendirmesini temizle; role kapaliyken bu satirlar Discord'u bozardi.
+        # Temizlik DOGRULANIRSA failsafe gorevi de artik gereksizdir ve
+        # kaldirilir: gorev yalnizca hosts yonlendirmesi olabilecegi surece
+        # var olmalidir. Temizlik basarisizsa gorev KORLEMESINE korunmaz:
+        # hedefi DOGRULANABILEN gorev korunur (bir sonraki logon'da yeniden
+        # denesin), hedefi okunamayan/dogrulanamayan gorev KALDIRILIR.
         try:
-            remove_hosts_redirect()
-        except Exception:
-            pass
+            hosts_cleared = remove_hosts_redirect()
+        except Exception as e:
+            hosts_cleared = False
+            self.log_mgr.console(
+                f"failsafe: acilista hosts temizligi hata verdi: {e}", level="WARN")
+        self._reconcile_failsafe_task(hosts_cleared, "acilis")
         # Eski surumden kalmis, KULLANICI-YAZILABILIR config.json icindeki DNS
         # yedegini once config'ten SOK (bir daha hicbir yol onu okuyamasin), sonra
         # ayri tut. Sessizce yonetici netsh'e GONDERILMEZ; arayuz acildiktan sonra
@@ -469,9 +474,9 @@ class DPortApp(ctk.CTk):
         # Eski, kullanici-yazilabilir indirme klasorundeki birikmis setup
         # dosyalarini temizle (yalniz DPort'un kendi ad kalibi).
         self.after(1000, self._purge_legacy_downloads)
-        # Eski config yedegi varsa kullaniciya sor (asla sessizce uygulama).
-        self.after(1600, self._offer_legacy_dns_restore)
-        self.after(2500, self._check_updates_on_start)
+        # Ilk acilis bilgilendirmesi kapatildiktan sonra diger baslangic
+        # pencerelerini sirala; modal pencereler ust uste acilmasin.
+        self.after(900, self._run_startup_prompts)
 
     def _fit_height(self):
         """Pencere yuksekligini icerigin GERCEK gereken yuksekligine esitler
@@ -486,6 +491,26 @@ class DPortApp(ctk.CTk):
                 self.geometry(f"{self.W}x{self.H}+{x}+{y}")
         except Exception:
             pass
+
+    def _run_startup_prompts(self):
+        """Baslangic bilgilendirmelerini birbirinin ustune bindirmeden siralar."""
+        if not self.cfg.get("hide_antivirus_notice", False):
+            dlg = _ModalDialog(
+                self,
+                L["av_notice_title"],
+                L["av_notice_msg"],
+                confirm=False,
+                ok_text=L["av_notice_ok"],
+                checkbox_text=L["av_notice_hide"],
+            )
+            self.wait_window(dlg)
+            if dlg.result and dlg.option_selected:
+                self.cfg.set("hide_antivirus_notice", True)
+        if not self._alive:
+            return
+        # Eski config yedegi varsa kullaniciya sor (asla sessizce uygulama).
+        self.after(500, self._offer_legacy_dns_restore)
+        self.after(1400, self._check_updates_on_start)
 
     # ─────────────────────────── Ikon / tek-ornek ───────────────────────────
     def _apply_icon(self):
@@ -748,29 +773,22 @@ class DPortApp(ctk.CTk):
             val.pack(anchor="center", pady=(2, 0))
             self.dash[key] = val
 
-        # Butonlar — YAN YANA (tek satir). Ana buton (Discord'u Ac) daha genis
-        # (3:2), accent + play ikonu; ikincil (Normale Don) ghost.
+        # Tek durum butonu: kapaliyken yolu etkinlestirir, acikken DPort'un
+        # yaptigi degisiklikleri varsayilana dondurur. Discord'u kullanici
+        # kendi baslatir.
         BTN_H = 42
         btnrow = ctk.CTkFrame(body, fg_color="transparent")
         btnrow.pack(fill="x", pady=(9, 0))
-        btnrow.grid_columnconfigure(0, weight=1, uniform="b")
-        btnrow.grid_columnconfigure(1, weight=1, uniform="b")
+        btnrow.grid_columnconfigure(0, weight=1)
+        self._connection_action_mode = "activate"
 
         self.btn_open = ctk.CTkButton(
-            btnrow, text=L["btn_open"], height=BTN_H, corner_radius=12,
+            btnrow, text=L["btn_activate"], height=BTN_H, corner_radius=12,
             fg_color=BLURPLE, hover_color=BLURPLE_H, text_color=WHITE,
-            font=_f(13, "bold"), command=self._open_discord,
+            border_width=1, border_color=BLURPLE,
+            font=_f(13, "bold"), command=self._handle_connection_action,
         )
-        self.btn_open.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-
-        self.btn_restore = ctk.CTkButton(
-            btnrow, text=L["btn_restore"], height=BTN_H, corner_radius=12,
-            fg_color="transparent", hover_color=HOVER, text_color=SUB,
-            text_color_disabled=DISABLED,
-            border_width=1, border_color=BORDER,
-            font=_f(13, "bold"), command=self._restore_normal,
-        )
-        self.btn_restore.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        self.btn_open.grid(row=0, column=0, sticky="ew")
 
         # Footer — butonlarin hemen altinda. Ikonlar ORTALI (grup halinde),
         # durum yazisi en altta ortali. Bosluklar dengeli.
@@ -791,7 +809,10 @@ class DPortApp(ctk.CTk):
                 border_width=1, border_color=BORDER, command=cmd,
             ).pack(side="left", padx=4)
 
-        # Durum — ortali (uzun mesaj sigacak kadar genis; kirpilmaz cunku pencere fit).
+        # Durum — iki satirlik alan bastan ayrilir. Yalniz karakter sayisini
+        # sinirlamak yeterli degildir: kalin yazi ve Windows DPI olceklemesi ayni
+        # metni farkli genislikte cizer. Sabit wraplength, uzun hata mesajlarinin
+        # pencerenin saginda kirpilmasini engeller.
         statusrow = ctk.CTkFrame(bot, fg_color="transparent")
         statusrow.pack(fill="x", pady=(7, 0))
         inner = ctk.CTkFrame(statusrow, fg_color="transparent")
@@ -799,7 +820,8 @@ class DPortApp(ctk.CTk):
         self.status_dot = ctk.CTkLabel(inner, text="●", font=_f(13), text_color=MUTED)
         self.status_dot.pack(side="left", padx=(0, 6))
         self.status_lbl = ctk.CTkLabel(
-            inner, text=L["st_ready"], font=_f(12, "bold"), text_color=SUB, anchor="w",
+            inner, text=L["st_ready"], font=_f(12, "bold"), text_color=SUB,
+            width=286, height=38, wraplength=286, justify="left", anchor="w",
         )
         self.status_lbl.pack(side="left")
 
@@ -1058,28 +1080,44 @@ class DPortApp(ctk.CTk):
         if "uptime" in self.dash:
             self.dash["uptime"].configure(
                 text=up_txt, text_color=GREEN if active else MUTED)
-        # Geri alinacak bir sey varsa (yol aktif YA DA DNS degistirilmis) buton aktif.
+        # Geri alinacak bir sey varsa (yol aktif YA DA DNS degistirilmis) tek
+        # buton geri alma eylemine doner. Hosts yazilamayip yol acilmasa bile
+        # DNS yedegi kalabilir; bu durumda kullanici kurtarma eylemini kaybetmez.
         # Onemli: hosts yazilamayip yol acilmasa bile DNS 1.1.1.1'e cekilmis olabilir;
         # bu durumda kullanici DNS'ini geri alabilmeli.
         can_restore = active or bool(self._get_dns_backup())
-        self.btn_restore.configure(state="normal" if can_restore else "disabled")
+        if not self._busy:
+            self._set_connection_button(active, can_restore)
 
-    def _set_discord_update_phase(self, phase: str):
-        """Updater durumunu ana UI thread'inde saklar ve surum kartini yeniler."""
-        self._discord_update_phase = phase
-        if phase == "updated":
-            self._discord_update_notice_until = time.time() + 5
-        elif phase != "updated":
-            self._discord_update_notice_until = 0.0
-        self._refresh_status_async()
+    def _set_connection_button(self, active: bool, can_restore: bool = False):
+        """Tek dugmenin eylem ve gorunumunu dogrulanmis durumla eslestirir."""
+        restore_mode = bool(active or can_restore)
+        self._connection_action_mode = "restore" if restore_mode else "activate"
+        if restore_mode:
+            self.btn_open.configure(
+                state="normal", text=L["btn_restore"],
+                fg_color="transparent", hover_color=HOVER, text_color=SUB,
+                border_color=BORDER,
+            )
+        else:
+            self.btn_open.configure(
+                state="normal", text=L["btn_activate"],
+                fg_color=BLURPLE, hover_color=BLURPLE_H, text_color=WHITE,
+                border_color=BLURPLE,
+            )
+
+    def _handle_connection_action(self):
+        """Tek dugmeyi o anda ekranda ilan edilen eyleme yonlendirir."""
+        if self._busy:
+            return
+        if self._connection_action_mode == "restore":
+            self._restore_normal()
+        else:
+            self._activate_connection()
 
     def _discord_version_tile(self, installed, running, fallback):
         """Surum karti icin dogru, sade metni ve rengini dondurur."""
         phase = self._discord_update_phase
-
-        # Kalici yeniden-baslatma durumu, daha eski bir Discord.exe calisiyorsa
-        # veya guncelleme sirasinda Discord gecici olarak kapandiysa gosterilir.
-        # Yeni exe calismaya basladiginda sonuc bes saniye gorunur.
         needs_restart = discord_restart_required(installed, running)
         if phase == "restart" and not needs_restart:
             if installed and running and installed == running:
@@ -1089,11 +1127,9 @@ class DPortApp(ctk.CTk):
             elif running:
                 phase = ""
                 self._discord_update_phase = ""
-
         if phase == "updated" and time.time() >= self._discord_update_notice_until:
             phase = ""
             self._discord_update_phase = ""
-
         status = ""
         color = TEXT if installed else MUTED
         if phase == "checking":
@@ -1105,7 +1141,6 @@ class DPortApp(ctk.CTk):
             self._discord_update_phase = "restart"
         elif phase == "updated":
             status, color = L["discord_ver_updated"], GREEN
-
         base = installed if installed else fallback
         return (f"{base}\n{status}" if status else base), color
 
@@ -1120,8 +1155,8 @@ class DPortApp(ctk.CTk):
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m}:{s:02d}"
 
-    # ─────────────────────────── Discord'u Ac ───────────────────────────
-    def _open_discord(self):
+    # ─────────────────────── Baglantiyi Etkinlestir ───────────────────────
+    def _activate_connection(self):
         if self._busy:
             return
         self._busy = True
@@ -1130,8 +1165,8 @@ class DPortApp(ctk.CTk):
         self._status_generation += 1
         self._connecting = True          # hero "Baglaniyor..." goster (periyodik refresh ezmesin)
         self._set_hero_connecting()
-        self.btn_open.configure(state="disabled", text=L["btn_opening"])
-        threading.Thread(target=self._open_discord_w, daemon=True).start()
+        self.btn_open.configure(state="disabled", text=L["btn_activating"])
+        threading.Thread(target=self._activate_connection_w, daemon=True).start()
 
     def _set_hero_connecting(self):
         """Acilis akisi basinda buyuk baglanti kartini 'Baglaniyor...' (sari) yapar;
@@ -1144,16 +1179,32 @@ class DPortApp(ctk.CTk):
         except Exception:
             pass
 
-    def _open_discord_w(self):
+    def _activate_connection_w(self):
+        """DPort baglanti yolunu hazirlar; Discord surecine dokunmaz.
+
+        Bu calisma yeri bir onceki surumlerde Discord zaten aciksa kapatip
+        yeniden baslatabiliyor, kapaliysa da Update.exe/Discord.exe
+        calistirabiliyordu. Baglanti yolu artik uygulamadan tamamen bagimsiz:
+        kullanici Discord'u ne zaman isterse kendi kisayolundan acar.
+        """
         try:
-            # 0) Discord'un DPort'tan ONCE calisip calismadigini, herhangi bir
-            # DPort degisikliginden once kaydet (sonradan olcersek DPort'un
-            # kendi surec baslatmasi/kapatmasi olcumu bozar).
-            was_running = is_discord_running()
-            version_before = installed_discord_version()
+            # 0) SALT-OKUNUR on-kontrol: hosts yonlendirmesini temizleyebilecek
+            # DOGRULANMIS bir kurtarma hedefi var mi? Yoksa yol zaten
+            # acilamayacak; DNS'i once degistirip sonra geri almak yerine
+            # sisteme HIC dokunmadan cikilir (DNS, role, hosts, gorev ve
+            # Discord aynen kalir).
+            source_dev = _source_dev_mode()
+            if not source_dev and not self._preflight_failsafe_target():
+                self._st(L["st_fail_no_recovery"], RED)
+                return
+            if source_dev:
+                self.log_mgr.console(
+                    "GELISTIRICI MODU | kurulu recovery hedefi aranmaz; "
+                    "sert kapanista hosts bir sonraki DPort acilisinda temizlenir",
+                    level="WARN")
 
             # 1) Sisteme dokunmadan guvenli DoH yolunu dogrula. Tum saglayicilar
-            # basarisizsa DNS/hosts/Discord aynen kalir.
+            # basarisizsa DNS/hosts ve Discord aynen kalir.
             if not self._preflight_discord_unblock():
                 self.log_mgr.write(
                     "DISCORD | guvenli DNS on-kontrolu basarisiz, sistem ayarlari degistirilmedi"
@@ -1192,113 +1243,17 @@ class DPortApp(ctk.CTk):
                 self._flushdns()
                 return
 
-            if was_running:
-                # 3) Discord DPort'tan once zaten acikti: yeni hazirlanan
-                # hosts/role yolunu kullanabilmesi icin TEK SEFERLIK kapat +
-                # Update.exe ile yeniden baslat. 6 saatlik updater onbellegi
-                # bu senaryoda kasitli olarak yok sayilir (amac surum degil,
-                # surecin yeni yola baglanmasidir). started_at, yeniden
-                # baslatma/launch'tan ONCE alinir; aksi halde updater log
-                # filtresi (since_epoch) ilk satirlari kacirabilir.
-                started_at = time.time()
-                self.after(0, lambda: self._set_discord_update_phase("checking"))
-                ok, msg = self._restart_discord_for_new_path()
-                if not ok:
-                    self.after(0, lambda: self._set_discord_update_phase(""))
-                    self.log_mgr.write(f"DISCORD | yeniden baslatma basarisiz | {msg}")
-                    self._st(msg, RED)
-                    return
-                self.log_mgr.write(f"DISCORD | yeniden baslatildi (yol degisti) | {msg}")
-                self._st(L["st_update_started"], GREEN)
-                threading.Thread(
-                    target=self._discord_update_result_w,
-                    args=(started_at, version_before),
-                    daemon=True,
-                ).start()
-                return
-
-            # 4) Discord onceden calismiyordu: mevcut davranis aynen korunur.
-            use_updater = self._discord_should_use_updater()
-            if use_updater:
-                self._st(L["st_updating"], YELL)
-            else:
-                self._st(L["st_opening_fast"], YELL)
-
-            started_at = time.time()
-            if use_updater:
-                self.after(0, lambda: self._set_discord_update_phase("checking"))
-            ok, msg = launch_discord(use_updater=use_updater)
-            if not ok:
-                self.after(0, lambda: self._set_discord_update_phase(""))
-                self.log_mgr.write(f"DISCORD | Başlatılamadı | {msg}")
-                self._st(f"{L['st_not_found']}: {msg}", RED)
-                return
-
-            self.log_mgr.write(f"DISCORD | Başlatıldı | {msg}")
-            if use_updater:
-                self._st(L["st_update_started"], GREEN)
-                threading.Thread(
-                    target=self._discord_update_result_w,
-                    args=(started_at, version_before),
-                    daemon=True,
-                ).start()
-            else:
-                self._st(L["st_opened"], GREEN)
+            # Buradan sonra Discord'a ait HICBIR surec yonetimi yoktur:
+            # kapatma, Update.exe, Discord.exe veya updater log takibi yok.
+            self.log_mgr.write(
+                "CONNECTION | yol etkin; Discord kullanici tarafindan baslatilacak")
+            self._st(L["st_activated"], GREEN)
         finally:
             self._busy = False
             self._connecting = False   # artik gercek durum uygulanabilir (hero cozulur)
-            self.after(0, lambda: self.btn_open.configure(state="normal", text=L["btn_open"]))
+            # Dugmenin sonraki eylemi worker varsayimiyla degil, status
+            # refresh'in dogruladigi role/DNS durumuyla belirlenir.
             self.after(0, self._refresh_status_async)
-
-    def _restart_discord_for_new_path(self):
-        """Discord DPort'tan once zaten acikken cagrilir: az once hazirlanan
-        hosts/role yolunu kullanabilmesi icin surecini kapatip Update.exe ile
-        yeniden baslatir. Yalniz close_discord_processes'in hedefledigi (kendi
-        kurulum kokundeki) Discord/Update sureclerine dokunur; sistemdeki
-        baska bir Update.exe'ye asla dokunmaz (bkz. discord_manager.py).
-
-        Basarisiz olursa DPort'un rolü/hosts yolu BOZULMAZ/geri ALINMAZ: yol
-        kendi icinde tutarlidir (path_ok=True, hazirlik tamamlandi), sorun
-        yalniz Discord surecinin bu yola gececek sekilde yeniden baslatila-
-        mamasidir. Yolu geri almak burada hicbir seyi duzeltmez (surec zaten
-        kapatilmis/kapatilamamis olabilir) ve kullanicinin tekrar 'Discord'u
-        Ac'a basmasini veya 'Normale Don' ile bilincli sekilde vazgecmesini
-        daha guvenli kilar."""
-        self._st(L["st_discord_restarting"], YELL)
-
-        ok, msg = close_discord_processes()
-        self.log_mgr.write(f"DISCORD | kapatma sinyali | {'OK' if ok else 'HATA'} | {msg}")
-        if not ok:
-            return False, L["st_restart_close_failed"]
-
-        if not self._wait_discord_closed(timeout=6.0):
-            # Surec ilk sinyalde kapanmamis olabilir: tek bir ek deneme.
-            ok2, msg2 = close_discord_processes()
-            self.log_mgr.write(
-                f"DISCORD | ikinci kapatma denemesi | {'OK' if ok2 else 'HATA'} | {msg2}"
-            )
-            if not ok2 or not self._wait_discord_closed(timeout=4.0):
-                return False, L["st_restart_close_timeout"]
-
-        self._flushdns()
-        # Surecin kapandigi yukarida (_wait_discord_closed) zaten dogrulandi;
-        # launch_discord'un kendi ic close_discord_processes()+sleep(1)
-        # adimini (ikinci/gereksiz kapatma) tekrarlamasina gerek yok.
-        ok, msg = launch_discord(use_updater=True, ensure_closed=False)
-        if not ok:
-            return False, L["st_restart_launch_failed"]
-        return True, msg
-
-    def _wait_discord_closed(self, timeout: float) -> bool:
-        """Discord surecinin gercekten kapandigini sinirli sure icinde
-        dogrular (sonsuz bekleme yok); uygulama kapanirsa beklemeyi hemen
-        birakir."""
-        deadline = time.time() + timeout
-        while self._alive and time.time() < deadline:
-            if not is_discord_running():
-                return True
-            time.sleep(0.3)
-        return not is_discord_running()
 
     # ─────────────── Temali dialog (native messagebox yerine) ───────────────
     def _ask(self, title, message) -> bool:
@@ -1323,22 +1278,27 @@ class DPortApp(ctk.CTk):
         # Baglanti acikken baslamis durum olcumunun gec kalan sonucu,
         # geri alma tamamlandiktan sonra "Baglandi / 1.1.1.1" yazamasin.
         self._status_generation += 1
-        self.btn_restore.configure(state="disabled")
+        self.btn_open.configure(state="disabled", text=L["btn_restoring"])
         threading.Thread(target=self._restore_normal_w, daemon=True).start()
 
     def _restore_normal_w(self):
         try:
             self._st(L["st_restoring"], YELL)
-            self._disable_discord_unblock()
+            # TAM basari UC kosula birden baglidir: hosts yonlendirmesi
+            # DOGRULANMIS bicimde kalkti, gorev uzlasmasi basarili ve DNS geri
+            # yuklendi. Yalnizca DNS'e bakip "Normale donuldu" demek, hosts hala
+            # 127.0.0.1'e yonlenirken kullaniciyi yaniltirdi.
+            unblock_ok = self._disable_discord_unblock()
             restored = self._restore_dns()
             self._flushdns()
-            status_key = "st_restored" if restored else "st_restore_partial"
-            status_color = GREEN if restored else RED
+            fully_restored = bool(unblock_ok and restored)
+            status_key = "st_restored" if fully_restored else "st_restore_partial"
+            status_color = GREEN if fully_restored else RED
             self._st(L[status_key], status_color)
             dns_txt = self._current_dns_text()
             self.after(
                 0,
-                lambda d=dns_txt, retry=not restored:
+                lambda d=dns_txt, retry=not fully_restored:
                     self._apply_restored_status(d, can_retry=retry),
             )
         finally:
@@ -1375,7 +1335,7 @@ class DPortApp(ctk.CTk):
         self._active_since = None
         if "uptime" in self.dash:
             self.dash["uptime"].configure(text=L["val_none"], text_color=MUTED)
-        self.btn_restore.configure(state="normal" if can_retry else "disabled")
+        self._set_connection_button(False, can_restore=can_retry)
 
     # ─────────────────────────── Unblock motoru ───────────────────────────
     def _preflight_discord_unblock(self) -> bool:
@@ -1390,20 +1350,62 @@ class DPortApp(ctk.CTk):
             self._st(L["st_fail_doh"], RED)
             return False
 
+    def _rollback_after_enable_failure(self, context: str) -> None:
+        """Failsafe gorevi KURULDUKTAN sonraki her basarisizlik/istisna yolunda
+        sistemi guvenli duruma dondurur.
+
+        Sirasiyla: role durdurulur, hosts yonlendirmesi (yazilmis OLABILIR)
+        temizlenmeye calisilir, gorev merkezi siniflandirmayla uzlastirilir.
+        Boylece gorev yalnizca temizlik DOGRULANDIYSA ya da hedefi guvensizse
+        kaldirilir; hosts durumu belirsiz ve gorev dogrulanmissa KORUNUR.
+
+        Rollback hatalari loglanir; ozgun hata cagiran tarafindan zaten
+        yazilmistir ve KAYBOLMAZ."""
+        try:
+            self._unblocker.stop()
+        except Exception as e:
+            self.log_mgr.write(f"UNBLOCK | {context}: role durdurulamadi | {e}")
+        try:
+            hosts_cleared = remove_hosts_redirect()
+        except Exception as e:
+            hosts_cleared = False
+            self.log_mgr.write(f"UNBLOCK | {context}: hosts geri alinamadi | {e}")
+        self._reconcile_failsafe_task(hosts_cleared, context)
+
     def _enable_discord_unblock(self) -> bool:
         """Yerel parcalayici roleyi baslatir ve engellenen Discord host'larini
         (update + API + gateway + CDN) ona yonlendirir."""
+        task_installed = False
         try:
             if not self._unblocker.start():
                 self.log_mgr.write("UNBLOCK | role baslatilamadi (443 mesgul)")
                 self._st(L["st_fail_port"], RED)
                 return False
+            # Failsafe gorevi hosts YAZILMADAN ONCE kurulur: yonlendirme bir kez
+            # yazildiktan sonra cokme olursa temizleyecek bir sey kalmalidir.
+            # Gorev kurulamaz veya geri okunarak dogrulanamazsa hosts'a HIC
+            # dokunulmaz — aksi halde temizleyicisi olmayan bir yonlendirme
+            # birakmis olurduk. Yalniz Calistir.bat'in acikca isaretledigi kaynak
+            # gelistirici modunda kurulu EXE yoktur; burada kalici HIGHEST gorev
+            # kurmak yerine normal kapanis + watchdog + sonraki acilis temizligi
+            # kullanilir. Paketlenmis uygulama bu moda giremez.
+            if _source_dev_mode():
+                self.log_mgr.write(
+                    "FAILSAFE | gelistirici modu; zamanlanmis kurtarma gorevi atlandi")
+            else:
+                if not self._install_failsafe_before_hosts():
+                    self._unblocker.stop()
+                    self._st(L["st_fail_failsafe"], RED)
+                    return False
+                task_installed = True
             if not add_hosts_redirect():
                 err = last_hosts_error()
                 winerr = last_hosts_winerror()
                 self.log_mgr.write(
                     f"UNBLOCK | hosts yazilamadi | {err or 'yonetici izni veya antivirus (HostsFileHijack) engeli'}")
-                self._unblocker.stop()  # role acik kalmasin
+                # Yazma basarisiz: yonlendirmenin YARIM yazilmis olabilecegini
+                # VARSAY, temizligi dogrula ve gorevi ona gore uzlastir.
+                self._rollback_after_enable_failure("hosts yazilamadi")
                 # Yalniz GERCEK yetki reddinde (winerror=5) VE yonetici DEGILSEK
                 # "yonetici gerekli" de. Aksi halde (paylasim ihlali/gecici kilit,
                 # ya da zaten yoneticiyken access-denied = AV/oyun anti-cheat)
@@ -1423,19 +1425,37 @@ class DPortApp(ctk.CTk):
                     f"UNBLOCK | hosts gecici kilidi {attempts}. denemede asildi | "
                     f"errno={r_errno} winerror={r_winerr}")
             self._flushdns()
-            self._ensure_failsafe()
             self.log_mgr.write("UNBLOCK | Baglanti yolu acildi (update+API+gateway+CDN)")
             return True
         except Exception as e:
             self.log_mgr.write(f"UNBLOCK | hata | {e}")
+            if task_installed:
+                # Gorev kuruldu ve hosts yazilmis OLABILIR: role + hosts + gorev
+                # birlikte guvenli duruma dondurulur.
+                self._rollback_after_enable_failure(f"beklenmeyen hata: {e}")
+            else:
+                try:
+                    self._unblocker.stop()
+                except Exception as stop_err:
+                    self.log_mgr.write(
+                        f"UNBLOCK | role durdurulamadi | {stop_err}")
             return False
 
-    def _disable_discord_unblock(self):
-        """hosts yonlendirmesini kaldirir ve roleyi durdurur; sistemi eski haline getirir."""
+    def _disable_discord_unblock(self) -> bool:
+        """hosts yonlendirmesini kaldirir, failsafe gorevini uzlastirir ve
+        roleyi durdurur; sistemi eski haline getirir.
+
+        Donus: TAM basari mi. Yalnizca hosts temizligi DOGRULANDIYSA ve gorev
+        uzlasmasi basariliysa True. Cagiran bu degeri yok sayip "normale
+        donuldu" DEMEMELIDIR: role dursa bile hosts hala 127.0.0.1'e
+        yonlendiriyorsa sistem normal DEGILDIR."""
         try:
-            remove_hosts_redirect()
-        except Exception:
-            pass
+            hosts_cleared = remove_hosts_redirect()
+        except Exception as e:
+            hosts_cleared = False
+            self.log_mgr.console(
+                f"failsafe: hosts temizligi hata verdi: {e}", level="WARN")
+        task_ok = self._reconcile_failsafe_task(hosts_cleared, "kapanis")
         try:
             self._unblocker.stop()
         except Exception:
@@ -1444,6 +1464,7 @@ class DPortApp(ctk.CTk):
             self._flushdns()
         except Exception:
             pass
+        return bool(hosts_cleared and task_ok)
 
     def _discord_should_use_updater(self) -> bool:
         # HER acilista Discord'un kendi guncelleyicisi (Update.exe) calissin: Discord
@@ -1726,50 +1747,115 @@ class DPortApp(ctk.CTk):
             lines.append(f"• {name} → {value}")
         return "\n".join(lines[:6])
 
-    def _ensure_failsafe(self):
-        """Logon hosts-temizleyici gorevini GUVENLI duruma senkronize eder: guvenli
-        konumdaysak (Program Files) gorevi guncel ve DOGRULANMIS exe'ye yeniden
-        yazar (onceki surumden kalmis, yazilabilir konumu gosteren stale/tehlikeli
-        gorev de duzeltilir); degilsek kalmis gorevi temizler. Yalniz gorev yasam
-        dongusu — DNS/hosts/relay/Discord yollarina dokunmaz.
+    # ── Failsafe gorev yasam dongusu ────────────────────────────────────────
+    # Gorev KALICI DEGILDIR. Yalnizca DPort'un isaretli hosts yonlendirmesinin
+    # aktif olabilecegi aralikta bulunur:
+    #   kur   -> hosts YAZILMADAN hemen once (baglanti yolu)
+    #   dusur -> hosts temizligi DOGRULANDIGI her yerde (acilis/kapanis/watchdog)
+    # Boylece temiz bir sistemde ONLOGON/HIGHEST bir gorev asilı kalmaz.
+    def _preflight_failsafe_target(self) -> bool:
+        """SALT-OKUNUR: HIGHEST yetkili gorev icin dogrulanmis bir hedef var mi?
 
-        Acilista bir kez calisir; sonraki cagrilar (or. "Discord'u Ac" akisi)
-        gereksiz yere tekrar senkronize ETMEZ. Senkronizasyon istisna ile
-        kesilirse bayrak isaretlenmez, boylece sonraki cagri yeniden dener."""
-        if getattr(self, "_failsafe_synced", False):
-            return
+        Hicbir sistem durumunu DEGISTIRMEZ (gorev kurmaz/silmez, DNS/hosts/role
+        ve Discord'a dokunmaz). Amaci, basarisiz olacagi belli bir akista
+        sistemi once bozup sonra geri almaktan kacinmaktir.
+
+        NOT: Bu on-kontrol SON guvenlik kontrolunun YERINE GECMEZ. Hedef, gorev
+        gercekten kurulmadan hemen once `install_logon_failsafe()` icinde
+        YENIDEN dogrulanir (TOCTOU); arada hedef bozulursa hosts'a yine
+        dokunulmaz."""
         try:
-            ok = sync_logon_failsafe()
-            self._failsafe_synced = True
-            if ok:
-                self.log_mgr.console("failsafe: logon hosts-temizleyici gorevi hazir")
-            else:
-                # Kurulmadi. Ya guvenli hedef yok (beklenen, zararsiz) ya da
-                # eski/guvensiz gorev KALDIRILAMADI — ikincisi guvenlik sorunudur
-                # ve SESSIZCE YUTULMAZ.
-                err = last_failsafe_error()
-                if err:
-                    self.log_mgr.write(f"FAILSAFE | {err}")
-                else:
-                    self.log_mgr.console(
-                        "failsafe: guvenli kurulum yolu yok, gorev kurulmadi")
+            target = verified_failsafe_target()
         except Exception as e:
-            self.log_mgr.console(f"failsafe: senkronizasyon hatasi: {e}", level="WARN")
+            self.log_mgr.write(f"FAILSAFE | recovery on-kontrolu hata verdi | {e}")
+            return False
+        if target:
+            return True
+        self.log_mgr.write(
+            "FAILSAFE | dogrulanmis kurtarma hedefi yok, sisteme dokunulmadi | "
+            f"{last_failsafe_error() or 'Program Files altinda dogrulanmis '
+                                        'DPort.exe bulunamadi'}")
+        return False
+
+    def _install_failsafe_before_hosts(self) -> bool:
+        """hosts yazmadan once dogrulanmis failsafe gorevini kurar.
+
+        Hedefi BURADA yeniden dogrular: `_preflight_failsafe_target()` yalnizca
+        erken cikis icindir, son soz bu adimindir (TOCTOU).
+
+        False donerse cagiran hosts'a DOKUNMAMALIDIR."""
+        try:
+            if install_logon_failsafe():
+                self.log_mgr.console("failsafe: logon hosts-temizleyici gorevi kuruldu")
+                return True
+            err = last_failsafe_error()
+            self.log_mgr.write(
+                f"FAILSAFE | gorev kurulamadi, hosts'a dokunulmadi | "
+                f"{err or 'dogrulanmis kurulum hedefi yok'}")
+        except Exception as e:
+            self.log_mgr.write(f"FAILSAFE | gorev kurulum hatasi | {e}")
+        return False
+
+    def _reconcile_failsafe_task(self, hosts_cleared: bool, context: str) -> bool:
+        """Gorevi MERKEZI siniflandirmayla uzlastirir (tek karar noktasi).
+
+        Kaldirma karari yalnizca `hosts_cleared`'a degil, gorevin KAYITLI
+        HEDEFINE de baglidir (bkz. core/failsafe.py::reconcile_failsafe_task):
+        hosts temizlenemese bile hedefi okunamayan, eski adli veya
+        dogrulanamayan bir HIGHEST gorev AYAKTA BIRAKILMAZ.
+
+        Donus: "ayakta guvensiz veya gereksiz gorev yok" garanti edilebiliyor mu.
+        Hata sessizce yutulmaz ve basari olarak RAPORLANMAZ."""
+        try:
+            if reconcile_failsafe_task(hosts_cleared):
+                if not hosts_cleared:
+                    self.log_mgr.console(
+                        f"failsafe: {context}: hosts temizlenemedi; dogrulanmis "
+                        f"kurtarma gorevi KORUNDU, guvensiz gorev birakilmadi",
+                        level="WARN")
+                return True
+            self.log_mgr.write(
+                f"FAILSAFE | {context}: gorev uzlastirilamadi | "
+                f"{last_failsafe_error() or 'bilinmeyen hata'}")
+        except Exception as e:
+            self.log_mgr.write(f"FAILSAFE | {context}: gorev uzlasma hatasi | {e}")
+        return False
 
     def _watchdog_loop(self):
         """Role beklenmedik sekilde olur de hosts yonlendirmesi kalirsa (Discord'u
-        bozacak durum), aninda temizle. Program calistigi surece gorev yapar."""
+        bozacak durum), aninda temizle. Program calistigi surece gorev yapar.
+
+        Basari YALNIZCA gercekten temizlendiginde loglanir; basarisizlik ve
+        istisna gorunur kalir (thread yine de olmez, bir sonraki turda tekrar
+        dener)."""
         while self._alive:
             time.sleep(2)
             try:
                 if is_hosts_redirect_active() and not self._unblocker.is_active():
-                    remove_hosts_redirect()
+                    try:
+                        hosts_cleared = remove_hosts_redirect()
+                    except Exception as e:
+                        hosts_cleared = False
+                        self.log_mgr.console(
+                            f"watchdog: hosts temizligi hata verdi: {e}",
+                            level="ERROR")
                     self._flushdns()
+                    if hosts_cleared:
+                        self.log_mgr.console(
+                            "watchdog: role kapali, hosts yonlendirmesi temizlendi",
+                            level="WARN")
+                    else:
+                        self.log_mgr.console(
+                            "watchdog: role kapali ama hosts yonlendirmesi "
+                            "TEMIZLENEMEDI (Discord acilmayabilir)", level="ERROR")
+                    # Gorev, hosts sonucuyla birlikte merkezi olarak uzlastirilir.
+                    self._reconcile_failsafe_task(hosts_cleared, "watchdog")
+            except Exception as e:
+                try:
                     self.log_mgr.console(
-                        "watchdog: role kapali, hosts yonlendirmesi temizlendi", level="WARN"
-                    )
-            except Exception:
-                pass
+                        f"watchdog: beklenmeyen hata: {e}", level="ERROR")
+                except Exception:
+                    pass
 
     # ─────────────────────────── Yardimcilar ───────────────────────────
     def _flushdns(self):
@@ -2191,19 +2277,22 @@ class _ModalDialog(ctk.CTkToplevel):
     """Uygulama gorunumuyle uyumlu koyu modal — native messagebox yerine.
     confirm=True: Evet/Hayir (result True/False); confirm=False: tek Tamam
     (bilgi/hata, result True). Ust hizali degil, ana pencere ortasina yakin."""
-    def __init__(self, app, title, message, confirm=True, ok_text=None, cancel_text=None):
+    def __init__(self, app, title, message, confirm=True, ok_text=None,
+                 cancel_text=None, checkbox_text=None):
         super().__init__(app)
         # CTkToplevel ilk olusturuldugunda Windows onu kisa sure bagimsiz/bos
         # pencere gibi cizebilir. Hazirlik boyunca gizle; ancak geometri,
         # transient sahiplik ve icerik tamamlandiktan sonra goster.
         self.withdraw()
         self.result = False
+        self.option_selected = False
+        self._option_var = ctk.BooleanVar(value=False)
         self.title(title)
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         _apply_win_icon(self)
-        self._build(title, message, confirm, ok_text, cancel_text)
+        self._build(title, message, confirm, ok_text, cancel_text, checkbox_text)
         self.update_idletasks()
         w, h = 340, self.winfo_reqheight() + 4
         app.update_idletasks()
@@ -2217,13 +2306,21 @@ class _ModalDialog(ctk.CTkToplevel):
         self.grab_set()
         self.bind("<Escape>", lambda e: self._cancel())
 
-    def _build(self, title, message, confirm, ok_text, cancel_text):
+    def _build(self, title, message, confirm, ok_text, cancel_text,
+               checkbox_text=None):
         pad = ctk.CTkFrame(self, fg_color=BG)
         pad.pack(fill="both", expand=True, padx=18, pady=16)
         ctk.CTkLabel(pad, text=title, font=_f(15, "bold"),
                      text_color=TEXT, anchor="w").pack(anchor="w")
         ctk.CTkLabel(pad, text=message, font=_f(11), text_color=SUB,
-                     anchor="w", justify="left", wraplength=300).pack(anchor="w", pady=(6, 14))
+                     anchor="w", justify="left", wraplength=300).pack(
+                         anchor="w", pady=(6, 10 if checkbox_text else 14))
+        if checkbox_text:
+            ctk.CTkCheckBox(
+                pad, text=checkbox_text, variable=self._option_var,
+                font=_f(11), text_color=SUB, fg_color=BLURPLE,
+                hover_color=BLURPLE_H, border_color=BORDER,
+            ).pack(anchor="w", pady=(0, 14))
         row = ctk.CTkFrame(pad, fg_color="transparent")
         row.pack(fill="x", side="bottom")
         if confirm:
@@ -2244,6 +2341,7 @@ class _ModalDialog(ctk.CTkToplevel):
                           command=self._ok).grid(row=0, column=0, sticky="ew")
 
     def _ok(self):
+        self.option_selected = bool(self._option_var.get())
         self.result = True
         self.destroy()
 

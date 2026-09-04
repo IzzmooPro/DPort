@@ -9,9 +9,16 @@ Yoneticisi'nden kapatma, ani elektrik, mavi ekran) bu satirlar hosts'ta kalir ve
 Discord + tarayicidan discord.com TAMAMEN acilmaz.
 
 Bu modul, her oturum acilista (logon) YUKSEK YETKIYLE sessizce calisan bir
-zamanlanmis gorev kurar. Gorev, programin kendisini `--cleanup-hosts` ile
-cagirir; o da hosts'taki isaretli blogu siler. Boylece program bir daha hic
+zamanlanmis gorev kurar. Gorev, DOGRULANMIS kurulu DPort.exe'yi `--cleanup-hosts`
+ile cagirir; o da hosts'taki isaretli blogu siler. Boylece program bir daha hic
 acilmasa bile Discord en gec bir sonraki oturumda tekrar normale doner.
+
+YASAM DONGUSU: gorev KALICI DEGILDIR. Yalnizca isaretli hosts yonlendirmesinin
+aktif olabilecegi aralikta bulunur:
+  kur       -> hosts YAZILMADAN hemen once (baglanti yolu)
+  uzlastir  -> hosts temizligi denenen her yerde (acilis, kapanis, watchdog,
+               rollback, `--cleanup-hosts`) -> reconcile_failsafe_task()
+Temiz bir sistemde ONLOGON/HIGHEST bir gorev asili KALMAZ.
 
 ────────────────────────────────────────────────────────────────────────────
 GUVENLIK (F2): "/RL HIGHEST" gorevinin hedefi ASLA degistirilebilir olmamali
@@ -52,8 +59,17 @@ Kosul saglanmazsa yalnizca kurulum atlanmaz; onceki surumlerden kalmis olabilece
 GUVENSIZ/ESKI gorev de KALDIRILIR. Gorev hedefine her zaman DOGRULANMIS canonical
 exe yolu yazilir (`sys.executable` ham hali degil).
 
-Gorev kurulmadiginda islevsel kayip sinirlidir: calisirken watchdog ve acilis
-self-heal hosts blogunu zaten temizler.
+KAYNAK MODU: `sys.executable` python.exe, betik ise kullanici-yazilabilir bir
+.py dosyasidir; ikisi de HIGHEST yetkili bir goreve ASLA hedef olamaz. Bunun
+yerine BAGIMSIZ olarak kesfedilmis ve ayni olcutlerden gecen kurulu
+`<ProgramFiles>\\DPort\\DPort.exe` kurtarma hedefi olarak kullanilabilir
+(bkz. `_installed_recovery_target`).
+
+Gorev kurulamadiginda hosts yonlendirmesi HIC YAZILMAZ: temizleyicisi olmayan
+bir yonlendirme birakmaktansa baglanti yolu acilmaz. Bu yuzden ust katman,
+sistemi degistirmeden once `verified_failsafe_target()` ile salt-okunur bir
+on-kontrol yapar (bkz. gui/app.py::_preflight_failsafe_target); son ve baglayici
+kontrol yine `install_logon_failsafe()` icindedir (TOCTOU).
 """
 import ctypes
 import os
@@ -451,19 +467,64 @@ def path_is_verified_install(path: str) -> Optional[str]:
     return exe
 
 
-def verified_failsafe_target() -> Optional[str]:
-    """CALISAN exe, HIGHEST yetkili gorevin hedefi olarak kabul edilebilir mi?
+_INSTALL_DIR_NAME = "DPort"
+_INSTALL_EXE_NAME = "DPort.exe"
 
-    Gorev hedefine YALNIZCA bu deger yazilir."""
-    if not getattr(sys, "frozen", False):
-        # Kaynaktan calisirken hedef yazilabilir bir .py betigi olurdu.
-        return None
-    return path_is_verified_install(sys.executable)
+
+def _installed_recovery_target() -> Optional[str]:
+    """Kaynaktan calisirken kullanilabilecek KURULU DPort.exe.
+
+    Kaynak modunda `sys.executable` python.exe'dir ve betik kullanici-yazilabilir
+    bir .py dosyasidir; ikisi de HIGHEST yetkili bir goreve BAGLANAMAZ. Ama
+    makinede Program Files altinda DOGRULANMIS bir DPort kurulumu varsa, hosts
+    yonlendirmesinin kurtaricisi O olabilir.
+
+    Aday, ortam degiskeni/PATH/kullanici dizini gibi ZEHIRLENEBILIR kaynaklardan
+    DEGIL, `_program_files_roots()` (SHGetKnownFolderPath) uzerinden kesfedilir
+    ve `path_is_verified_install()` kontrollerinin (canonical yol, reparse point
+    yok, DACL + sahiplik kapali) TAMAMINDAN gecmek zorundadir.
+
+    Ikinci kaynak: hali hazirda KAYITLI gorevin hedefi. O da ayni olcutle
+    dogrulanir; dogrulanamiyorsa yeniden KULLANILMAZ (ayrica
+    `_ensure_no_unsafe_task()` tarafindan kaldirilir).
+
+    PROTOKOL: hedefin `--cleanup-hosts` bayragini destekledigi varsayim degil:
+    bu bayrak DPort'un ILK surumunden beri `main.py` girisindedir ve aday
+    yalnizca `<ProgramFiles>\\DPort\\DPort.exe` kalibina uyan, dogrulanmis bir
+    DPort kurulumu olabilir."""
+    for root in _program_files_roots():
+        candidate = os.path.join(root, _INSTALL_DIR_NAME, _INSTALL_EXE_NAME)
+        verified = path_is_verified_install(candidate)
+        if verified:
+            return verified
+
+    registered = _registered_task_target()
+    if registered:
+        verified = path_is_verified_install(registered)
+        if verified and (os.path.basename(verified)
+                         == os.path.normcase(_INSTALL_EXE_NAME)):
+            return verified
+    return None
+
+
+def verified_failsafe_target() -> Optional[str]:
+    """HIGHEST yetkili gorevin hedefi olarak kabul edilebilecek yol.
+
+    Gorev hedefine YALNIZCA bu deger yazilir.
+
+    - Paketlenmis (frozen) surec: YALNIZCA calisan exe degerlendirilir. Portable
+      veya kurcalanmis bir kopya, kurulu surumun gorevini devralamaz.
+    - Kaynak modu: calisan betik ASLA hedef olamaz; yalnizca bagimsiz olarak
+      kesfedilmis ve dogrulanmis kurulu DPort.exe kullanilabilir."""
+    if getattr(sys, "frozen", False):
+        return path_is_verified_install(sys.executable)
+    return _installed_recovery_target()
 
 
 def _exe_in_protected_location() -> bool:
-    """Geriye donuk ad: calisan exe, HIGHEST yetkili goreve baglanacak kadar
-    korunuyor mu?"""
+    """Geriye donuk ad: HIGHEST yetkili goreve baglanabilecek DOGRULANMIS bir
+    hedef var mi? (Paketlenmis surecte calisan exe; kaynak modunda bagimsiz
+    kesfedilmis kurulu DPort.exe.)"""
     return verified_failsafe_target() is not None
 
 
@@ -560,6 +621,15 @@ def _delete_task(name: str) -> bool:
     return True
 
 
+def _registered_task_target(name: str = TASK_NAME) -> Optional[str]:
+    """Kayitli gorevin <Command> alanindaki ham exe yolu (tirnaksiz).
+    Gorev yoksa veya alan okunamazsa None."""
+    registered = _task_command(name)
+    if not registered:
+        return None
+    return registered.strip().strip('"').strip() or None
+
+
 def _ensure_no_unsafe_task() -> bool:
     """Kayitli gorev DOGRULANABILIR bir hedefi gostermiyorsa KALDIRIR.
 
@@ -574,8 +644,8 @@ def _ensure_no_unsafe_task() -> bool:
         return False
     if not exists:
         return True
-    registered = _task_command(TASK_NAME)
-    if registered and path_is_verified_install(registered.strip('"')):
+    registered = _registered_task_target()
+    if registered and path_is_verified_install(registered):
         return True
     return remove_logon_failsafe()
 
@@ -603,14 +673,20 @@ def install_logon_failsafe() -> bool:
     _set_error("")
     target = verified_failsafe_target()
     if not target:
-        # Calisan surec goreve baglanamaz (kaynak modu / portable / gevsek ACL).
-        # KAYITLI hedef KENDI BASINA dogrulanabiliyorsa (or. Program Files'a
-        # kurulu surumun olusturdugu mesru gorev) ona DOKUNMAYIZ: amac guvensiz
-        # gorevi kaldirmak, calisan kopya paketlenmemis diye saglam bir guvenlik
-        # agini yok etmek degil.
+        # Gorev icin baglanabilecegimiz DOGRULANMIS bir hedef yok. KAYITLI hedef
+        # KENDI BASINA dogrulanabiliyorsa (or. Program Files'a kurulu surumun
+        # olusturdugu mesru gorev) ona DOKUNMAYIZ: amac guvensiz gorevi
+        # kaldirmak, saglam bir guvenlik agini yok etmek degil.
+        if getattr(sys, "frozen", False):
+            reason = ("calisan exe dogrulanmis bir kurulum degil "
+                      "(portable/gevsek ACL/reparse point)")
+        else:
+            reason = ("kaynak modunda dogrulanmis kurulu recovery hedefi yok "
+                      "(Program Files altinda dogrulanmis DPort.exe bulunamadi)")
         if not _ensure_no_unsafe_task():
-            _set_error(LAST_ERROR or
-                       "guvenli hedef yok ve eski gorev kaldirilamadi")
+            reason = (f"{reason} | GUVENLIK: eski gorev kaldirilamadi: "
+                      f"{LAST_ERROR}")
+        _set_error(reason)
         return False
 
     for old in _LEGACY_TASKS:
@@ -659,18 +735,38 @@ def remove_logon_failsafe() -> bool:
     return ok
 
 
-def sync_logon_failsafe() -> bool:
-    """Failsafe gorevini GUVENLI duruma senkronize eder (yalniz gorev yasam
-    dongusu; DNS/hosts/relay/Discord yollarina DOKUNMAZ):
+def reconcile_failsafe_task(hosts_cleared: bool) -> bool:
+    """Gorev yasam dongusunun TEK karar noktasi.
 
-    - Dogrulanmis, ACL-korumali kurulum: gorevi guncel ve DOGRULANMIS exe yoluna
-      YENIDEN yazar (/F ile ustune). Boylece onceki bir surumden kalmis, yazilabilir
-      bir konumu gosteren tehlikeli gorev de guvenli hedefe duzeltilir.
-    - Aksi halde (kaynak / portable / yazilabilir veya belirsiz konum): kalmis
-      olabilecek gorevi TEMIZLER ve kurmaz.
+    Acilis, normal kapanis, watchdog, baglanti rollback'i ve `--cleanup-hosts`
+    bakim yolu AYNI siniflandirmayi kullanir:
 
-    Doner: gorev (yeniden) kuruldu ise True."""
-    return install_logon_failsafe()
+      hosts_cleared=True  -> isaretli yonlendirme DOGRULANMIS bicimde yok;
+                             gorev artik gereksizdir, TUM adlar kaldirilir.
+      hosts_cleared=False -> yonlendirme hala duruyor OLABILIR:
+          * gorev yok                                  -> yapacak sey yok
+          * hedefi BAGIMSIZ olarak dogrulanabiliyor    -> KORUNUR (bir sonraki
+            logon'da yeniden denesin)
+          * hedefi okunamiyor / dogrulanamiyor         -> KALDIRILIR; hosts
+            sonucu bunu degistirmez, cunku yazilabilir bir hedefi gosteren
+            HIGHEST gorev kalici yetki yukseltmesi demektir
+      Eski (legacy) adlar hosts sonucundan BAGIMSIZ olarak her zaman kaldirilir:
+      onlarin hedefi bizim protokolumuzle dogrulanmaz.
+
+    Donus: "ayakta guvensiz veya gereksiz gorev kalmadi" GARANTI edilebiliyor mu.
+    False ise LAST_ERROR doludur ve cagiran bunu SESSIZCE YUTMAMALIDIR."""
+    _set_error("")
+    ok = True
+    for old in _LEGACY_TASKS:
+        if not _delete_task(old):
+            ok = False
+    if hosts_cleared:
+        if not _delete_task(TASK_NAME):
+            ok = False
+        return ok
+    if not _ensure_no_unsafe_task():
+        ok = False
+    return ok
 
 
 def failsafe_installed() -> bool:

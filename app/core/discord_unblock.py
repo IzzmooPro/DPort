@@ -500,7 +500,7 @@ def _reset_retry_info() -> None:
     _HOSTS_TLS.retry_winerror = None
 
 # hosts dosyasina yazma/okuma islemlerini (add/remove/aktiflik) TEK sirada tutar;
-# ayni anda iki thread'in (or. _open_discord_w ile watchdog) dosyayi ezmesini onler.
+# ayni anda iki thread'in (or. baglanti-etkinlestirme ile watchdog) dosyayi ezmesini onler.
 _HOSTS_LOCK = threading.RLock()
 
 # Windows winerror kodlari (hata sinifi teshisi icin):

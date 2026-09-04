@@ -11,10 +11,13 @@ installer/
 
 # Local release/build tooling
 scripts/Build.bat
-scripts/Calistir.bat
 scripts/Kurulum-Yap.bat
 scripts/Temizle.bat
-packaging/
+# packaging/ KAYNAKTIR (DPort.iss, DPort.spec) ve izlenir; yalniz uretilen
+# ciktilar ignore edilir. Guvenlik duzeltmeleri kaynak gecmisinde kalmalidir.
+packaging/Output/
+packaging/*.tmp
+packaging/*.bak
 Icon.html
 icon.ico
 

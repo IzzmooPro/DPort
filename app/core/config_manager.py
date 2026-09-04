@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
     "selected_adapter": None,
     "active_provider_id": None,
     "discord_last_update_ok_at": None,
+    "hide_antivirus_notice": False,
 }
 
 

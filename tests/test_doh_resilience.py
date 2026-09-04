@@ -17,7 +17,7 @@ _APP = os.path.join(_ROOT, "app")
 if _APP not in sys.path:
     sys.path.insert(0, _APP)
 
-from core import discord_unblock  # noqa: E402
+from core import discord_manager, discord_unblock  # noqa: E402
 from gui import app as gui_app  # noqa: E402
 
 
@@ -266,6 +266,11 @@ class _PreflightFailureApp:
     def _st(self, text, color):
         self.statuses.append((text, color))
 
+    def _preflight_failsafe_target(self):
+        # Bu test DoH on-kontrolunun SIRASINI dogrular; kurtarma hedefi
+        # on-kontrolu (ondan once calisir) burada bilerek gecirilir.
+        return True
+
     def _preflight_discord_unblock(self):
         return False
 
@@ -281,12 +286,11 @@ class TestDohPreflightOrdering(unittest.TestCase):
         fake = _PreflightFailureApp()
         forbidden = mock.Mock(side_effect=AssertionError("system mutation attempted"))
 
-        with mock.patch.object(gui_app, "is_discord_running", return_value=False), \
-             mock.patch.object(gui_app, "get_active_adapters", forbidden), \
+        with mock.patch.object(gui_app, "get_active_adapters", forbidden), \
              mock.patch.object(gui_app, "set_dns", forbidden), \
              mock.patch.object(gui_app, "add_hosts_redirect", forbidden), \
-             mock.patch.object(gui_app, "launch_discord", forbidden):
-            gui_app.DPortApp._open_discord_w(fake)
+             mock.patch.object(discord_manager, "launch_discord", forbidden):
+            gui_app.DPortApp._activate_connection_w(fake)
 
         forbidden.assert_not_called()
         self.assertFalse(fake._busy)

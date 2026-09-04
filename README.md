@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.12-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.13-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
-### ⬇️ [**DPort v3.12'yi İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
+### ⬇️ [**DPort v3.13'ü İndir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>İndirilecek dosya: `DPort-Setup-3.12.exe`</sub>
+<sub>İndirilecek dosya: `DPort-Setup-3.13.exe`</sub>
 
 </div>
 
@@ -20,20 +20,20 @@
 
 Bazı ağlarda Discord açılmaz, takılır veya güncellemesini bitiremez. DPort, Discord'un bağlanmak için kullandığı yolu düzelterek bu sorunu aşmayı dener.
 
-Tek bir düğmesi vardır: **Discord'u Aç**. İşin bittiğinde **Normale Dön** düğmesi yaptığı değişiklikleri geri alır.
+Tek bir durum düğmesi vardır: bağlantı kapalıyken **Bağlantıyı Etkinleştir**, açıkken **Varsayılana Dön** yazar. DPort yalnızca bağlantı yolunu hazırlar; Discord'u kullanıcı kendi kısayolundan, istediği zaman açar.
 
 ---
 
 ## Üç adımda kullan
 
 **1. İndir ve kur**
-[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.12.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
+[Son sürümü indir](https://github.com/IzzmooPro/DPort/releases/latest) ve `DPort-Setup-3.13.exe` dosyasını çalıştır. Windows yönetici onayı isteyecek.
 
 **2. DPort'u aç**
 Masaüstü kısayolundan başlat. Tek pencerelik, sade bir arayüz açılır.
 
-**3. "Discord'u Aç" düğmesine bas**
-DPort gerekli ayarları yapar ve Discord'u başlatır. İşin bitince **Normale Dön**'e basabilirsin.
+**3. "Bağlantıyı Etkinleştir" düğmesine bas**
+DPort gerekli bağlantı ayarlarını yapar. Ardından Discord'u masaüstü/başlat menüsü kısayolundan ne zaman istersen kendin aç. DPort, Discord'u başlatmaz, kapatmaz veya yeniden başlatmaz. İşin bitince aynı düğmedeki **Varsayılana Dön** eylemine basabilirsin.
 
 > Discord'u kullanırken DPort'un açık kalması gerekir — bağlantı onun üzerinden gittiği için kapatırsan Discord'un bağlantısı kesilebilir. Pencereyi kapatınca tepside açık bırakabilirsin.
 
@@ -41,7 +41,7 @@ DPort gerekli ayarları yapar ve Discord'u başlatır. İşin bitince **Normale 
 
 ## Bilgisayarında neyi değiştirir?
 
-DPort üç şeye dokunur. Üçü de **Normale Dön** ile veya program kapanınca geri alınır:
+DPort üç şeye dokunur. Üçü de **Varsayılana Dön** ile veya program kapanınca geri alınır:
 
 | Ne | Ne için | Geri alınır mı? |
 |---|---|---|
@@ -118,16 +118,15 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.12'de ne değişti?
+## v3.13'te ne değişti?
 
-Bu sürüm, DPort'un açılışını ve uzun süren güncelleme işlemlerini daha güvenilir hale getiriyor:
+Bu sürüm, DPort ile Discord'un açılışını birbirinden ayırıyor ve geri alma güvenliğini güçlendiriyor:
 
-- **Port çakışması artık DPort'un sessizce kapanmasına yol açmıyor.** İkinci örnek kontrolü, yalnızca bağlantı kurulmasına değil DPort'a özgü doğrulanmış yanıta bakıyor.
-- **Windows ile otomatik başlatma düzeltildi.** Program Files gibi boşluk içeren kurulum yolları Windows başlangıç kaydına doğru biçimde yazılıyor; eski veya bozuk kayıtlar etkin görünmüyor.
-- **Yönetici izni alınamazsa anlaşılır hata gösteriliyor.** UAC reddedildiğinde veya yükseltme başlatılamadığında program hiçbir açıklama vermeden kapanmıyor.
-- **DPort güncelleme hataları artık kullanıcıya güvenilir biçimde ulaşıyor.** Gecikmeli hata penceresinde oluşabilen iç hata giderildi.
-- **Uzun Discord güncellemeleri erken başarısız sayılmıyor.** Güncelleyici aynı indirme aşamasında uzun süre kalsa bile aktif olduğu sürece izleniyor; geçici eski hatalar yeni denemeyi yanlışlıkla başarısız göstermiyor.
-- Yerel röle, DNS/hosts geri alma, güvenli DoH ve Discord TLS bağlantı stratejileri **aynen korundu**.
+- **DPort artık Discord'u otomatik açmıyor, kapatmıyor veya yeniden başlatmıyor.** Önce bağlantıyı etkinleştir, ardından Discord'u istediğin zaman kendi kısayolundan aç.
+- **Bağlantı yönetimi tek düğmede toplandı.** Kapalıyken “Bağlantıyı Etkinleştir”, açıkken “Varsayılana Dön” eylemi gösteriliyor.
+- **İlk açılış bilgilendirmesi eklendi.** Antivirüs engeli ve yeni elle Discord açma davranışı kısa biçimde anlatılıyor; istersen bir daha gösterilmiyor.
+- **Geri alma güvenliği güçlendirildi.** `hosts` temizliği ve kurtarma görevi birlikte doğrulanıyor; yarım kalan işlemler başarı gibi gösterilmiyor.
+- **Hata ve durum metinleri iyileştirildi.** Uzun mesajlar pencereye sığıyor ve bağlantının gerçek durumu butona doğru yansıyor.
 
 ---
 
@@ -175,11 +174,11 @@ python -m unittest discover -s tests
 
 <br>
 
-**DPort** is a small Windows tool that helps Discord connect and update on networks where it otherwise fails. One button — **Open Discord** — and **Restore Normal** to undo.
+**DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.12.exe`).
+**Download:** [latest release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.13.exe`).
 
-**What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Normal* or when the app closes.
+**What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 
 **Why administrator rights:** changing the adapter's DNS, writing to the protected `hosts` file, managing the protected recovery/update locations, and safely registering the high-privilege cleanup scheduled task all require them. That is the whole job of the program.
 
