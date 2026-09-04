@@ -1586,7 +1586,8 @@ class DPortApp(ctk.CTk):
     # Bu veri yonetici yetkili `netsh` komutuna girdi oldugu icin standart
     # kullanicinin YAZAMADIGI bir yerde durmalidir. Sira:
     #   1) secure_store  -> %ProgramData%\DPort\dns_state.json (ACL: Users = RX)
-    #   2) bellek        -> store hazirlanamazsa; kurcalanamaz ama cokmede kaybolur
+    #   2) bellek        -> mevcut oturumda geri alma icin ek kopya;
+    #                      tek basina yeni DNS degisikligine izin vermez
     # Kullanici-yazilabilir config.json'a HICBIR KOSULDA dusulmez.
     def _get_dns_backup(self) -> dict:
         try:
@@ -1595,7 +1596,7 @@ class DPortApp(ctk.CTk):
             stored = {}
         return stored or dict(self._dns_backup_mem)
 
-    def _set_dns_backup(self, backup) -> None:
+    def _set_dns_backup(self, backup) -> bool:
         data = dict(backup) if backup else {}
         persisted = False
         try:
@@ -1609,6 +1610,7 @@ class DPortApp(ctk.CTk):
             self.log_mgr.console(
                 "DNS | korumali kurtarma dosyasi yazilamadi; yedek yalniz bu oturumda "
                 "tutuluyor (cokme kurtarmasi devre disi)", level="WARN")
+        return bool(persisted)
 
     def _backup_dns(self, adapters):
         """Read/validate every new adapter before allowing any DNS mutation."""
@@ -1622,7 +1624,8 @@ class DPortApp(ctk.CTk):
             saved_guid = backup[name].get("interface_guid")
             if saved_guid and saved_guid != current.get("interface_guid"):
                 raise ValueError("Adaptor kimligi yedekle uyusmuyor")
-        self._set_dns_backup(backup)
+        if not self._set_dns_backup(backup):
+            raise OSError("Korumali DNS kurtarma yedegi kalici olarak dogrulanamadi")
         self.log_mgr.write(f"DNS | orijinal ayar yedeklendi ({len(backup)} adaptor)")
 
     @staticmethod

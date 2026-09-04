@@ -27,32 +27,14 @@ REM Kutuphaneleri kontrol et ve gerekirse yukle
 echo [*] Kutuphaneler kontrol ediliyor...
 echo.
 
-pip show customtkinter >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ ] customtkinter bulunamadi, yukleniyor...
-    pip install customtkinter --quiet
-    echo [OK] customtkinter yuklendi.
-) else (
-    echo [OK] customtkinter zaten yuklu.
+python -m pip install -r "%ROOT%\requirements.txt" --quiet
+if errorlevel 1 (
+    echo [HATA] Bagimliliklar hazirlanamadi. Program baslatilmadi.
+    popd
+    pause
+    exit /b 1
 )
-
-pip show Pillow >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ ] Pillow bulunamadi, yukleniyor...
-    pip install Pillow --quiet
-    echo [OK] Pillow yuklendi.
-) else (
-    echo [OK] Pillow zaten yuklu.
-)
-
-pip show pystray >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ ] pystray bulunamadi, yukleniyor...
-    pip install pystray --quiet
-    echo [OK] pystray yuklendi.
-) else (
-    echo [OK] pystray zaten yuklu.
-)
+echo [OK] Sabit surumlu bagimliliklar hazir.
 
 echo.
 echo ==========================================

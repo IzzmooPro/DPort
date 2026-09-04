@@ -332,15 +332,16 @@ class TestF4DnsRecoveryState(unittest.TestCase):
             app._set_dns_backup({"Ethernet": {"ipv4": {"primary": "1.2.3.4", "dhcp": False}}})
             self.assertIn("Ethernet", app._get_dns_backup())   # _ForbiddenConfig patlamadi
 
-    def test_backup_falls_back_to_memory_not_to_user_file(self):
-        """Korumali store yoksa yedek BELLEKTE tutulur; config'e yazilmaz."""
+    def test_backup_blocks_activation_without_persistent_store(self):
+        """Bellek geri alma icin korunur ama yeni aktivasyona izin vermez."""
         app = self._stub()
         with mock.patch.object(self.gui_app.secure_store, "save_dns_backup", return_value=False), \
              mock.patch.object(self.gui_app.secure_store, "load_dns_backup", return_value={}), \
              mock.patch.object(self.gui_app, "get_dns",
                                return_value={"ipv4": {"primary": "9.9.9.9", "dhcp": False},
                                              "ipv6": {"primary": None, "dhcp": True}}):
-            app._backup_dns([{"name": "Ethernet"}])
+            with self.assertRaises(OSError):
+                app._backup_dns([{"name": "Ethernet"}])
 
         self.assertEqual(list(app._dns_backup_mem), ["Ethernet"])
         self.assertNotIn("dns_backup", app.cfg.data)

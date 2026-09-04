@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.14-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.15-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.14 kurulum dosyası: `DPort-Setup-3.14.exe`</sub>
+<sub>v3.15 kurulum dosyası: `DPort-Setup-3.15.exe`</sub>
 
 </div>
 
@@ -18,7 +18,7 @@
 
 ## Arayüz
 
-v3.13 uygulamasından gerçek ekran görüntüsü (v3.14 için yeni görsel henüz alınmadı):
+v3.13 uygulamasından gerçek ekran görüntüsü (yeni sürüm için görsel henüz alınmadı):
 
 <p align="center">
   <img src="docs/images/dport-v3.13-main.jpg" alt="DPort v3.13 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
@@ -130,7 +130,13 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.14'te ne değişti?
+## v3.15'te ne değişti?
+
+- Korumalı DNS yedeği diske yazılıp doğrulanamazsa bağlantı etkinleştirilmez.
+- Yeni yedek hazır olmadan eski kurtarma dosyası değiştirilmez; geçerli eski yedek biçimleri desteklenir.
+- Kaynaktan çalıştırma komutu ve sabit sürümlü bağımlılık kurulumu uyumlu hale getirildi.
+
+## Önceki sürüm: v3.14
 
 - **DNS yedekleme dil bağımsız hale getirildi.** DNS durumu güvenle okunamazsa ağ ayarları değiştirilmez.
 - **Tüm DNS adresleri sıralarıyla saklanır.** IPv4 ve IPv6 geri yüklemesi tekrar okunarak doğrulanır; hata veya eksik doğrulama varsa yedek korunur.
@@ -177,11 +183,13 @@ Bu sürüm, DPort ile Discord'un açılışını birbirinden ayırıyor ve geri 
 ```bash
 git clone https://github.com/IzzmooPro/DPort.git
 cd DPort
-pip install -r requirements.txt
-python app/main.py
+python -m pip install -r requirements.txt
+python app/main.py --source-dev
 ```
 
 Gereksinimler: Windows 10/11 ve Python 3.10+. Program yönetici onayı ister.
+
+Windows'ta aynı geliştirme akışını `scripts\Calistir.bat` ile başlatabilirsin. `--source-dev` kurulu EXE gerektirmez; oturum açılışındaki hosts kurtarma görevi kurulmaz, sert kapanıştan sonra DPort'u yeniden açman gerekir. Kalıcı DNS yedeği zorunluluğu bu modda da geçerlidir.
 
 Testler:
 
@@ -198,7 +206,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.14 is now available. Download:** [v3.14 release](https://github.com/IzzmooPro/DPort/releases/tag/v3.14) (`DPort-Setup-3.14.exe`).
+**Version 3.15. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.15.exe`).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 

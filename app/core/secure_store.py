@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 import threading
+import tempfile
 from ctypes import wintypes
 from typing import Optional
 
@@ -307,27 +308,42 @@ def _discard_untrusted(path: str) -> None:
 def save_dns_backup(backup: Optional[dict]) -> bool:
     """Ayricalikli DNS kurtarma durumunu yazar. Bos/None ise durumu siler.
 
-    Donus: kalici olarak yazilabildi mi. False ise cagiran taraf yalnizca
-    bellek ici yedekle devam eder (kullanici-yazilabilir bir dosyaya ASLA
-    dusmez)."""
+    Donus: korumali, kalici ve tekrar okunabilir olarak yazilabildi mi.
+    False ise yeni DNS degisikligine izin verilmez."""
     path = _dns_state_path()
     if not path:
         return False
+    tmp = None
     try:
         if not backup:
             if os.path.isfile(path):
                 os.remove(path)
             return True
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        # Eski kurtarma dosyasini yeni veri tamamen hazir olmadan degistirme.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                         dir=os.path.dirname(path),
+                                         prefix="dns-state-", suffix=".tmp",
+                                         delete=False) as f:
+            tmp = f.name
             json.dump({"version": 1, "dns_backup": backup}, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        if not apply_protected_acl(tmp) or not written_by_privileged_process(tmp):
+            return False
+        with open(tmp, "r", encoding="utf-8") as f:
+            if json.load(f) != {"version": 1, "dns_backup": backup}:
+                return False
         os.replace(tmp, path)
-        # Sahipligi acikca Administrators yap: okuma tarafindaki 'ayricalikli
-        # yazar' dogrulamasi buna dayanir.
-        apply_protected_acl(path)
-        return True
+        tmp = None
+        return load_dns_backup() == backup
     except Exception:
         return False
+    finally:
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 # ───────────────────────────── TOCTOU korumali dosya ────────────────────────
