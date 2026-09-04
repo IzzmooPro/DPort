@@ -20,7 +20,7 @@ from core.app_info import APP_NAME, APP_VERSION      # noqa: E402
 from core.updater import _pick_setup_asset, is_newer_version  # noqa: E402
 
 # Bu surumun supersede ettigi, en son YAYINLANMIS surum.
-PREVIOUS_RELEASE = "3.14"
+PREVIOUS_RELEASE = "3.15"
 
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
 _README = os.path.join(_ROOT, "README.md")
@@ -44,6 +44,12 @@ class TestReleaseAlignment(unittest.TestCase):
         self.assertIsNotNone(m, "MyAppVersion bulunamadi")
         self.assertEqual(m.group(1), APP_VERSION,
                          "Inno MyAppVersion ile APP_VERSION uyusmuyor")
+
+    def test_installer_uses_verified_immediate_close_without_restart_manager(self):
+        text = _read(_ISS)
+        self.assertRegex(text, r"(?m)^CloseApplications=no\s*$")
+        self.assertRegex(text, r"(?m)^RestartApplications=no\s*$")
+        self.assertNotRegex(text, r"(?m)^CloseApplications=(yes|force)\s*$")
 
     def test_readme_badge_matches_app_version(self):
         text = _read(_README)

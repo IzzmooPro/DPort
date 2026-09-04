@@ -711,7 +711,11 @@ class TestInstallerWiring(unittest.TestCase):
     def test_file_exists_is_not_the_security_gate(self):
         proc = self.text[self.text.index(
             "procedure DropFailsafeTaskAfterHostsCleanup"):]
-        proc = proc[:proc.index("procedure CurStepChanged")]
+        # Yalniz failsafe uzlastirma prosedurunu denetle. Bunun ardindan gelen
+        # pasif surec-kapatma kodu, ilk kurulumda eski EXE'nin bulunmamasini
+        # dogal olarak FileExists ile ayirt eder; o bir guvenlik hedefi secimi
+        # degildir ve bu invariant'in kapsamina girmez.
+        proc = proc[:proc.index("function ConnectionRequiresRestore")]
         self.assertNotIn("if not FileExists(SafeExe)", proc,
                          "FileExists hala guvenlik kapisi olarak kullaniliyor")
 

@@ -99,6 +99,26 @@ def _doh_error_text(exc: Exception) -> str:
     return f"{type(reason).__name__}: {reason}"[:300]
 
 
+def _socket_error_text(exc: BaseException) -> str:
+    """Kisisel veri icermeyen, karsilastirilabilir ag hata sinifi.
+
+    Istisnanin serbest metnini loglamiyoruz: isletim sistemi metni beklenmedik
+    yerel ayrintilar icerebilir. Teshis icin hata turu ve sayisal kodlar yeterli.
+    """
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if isinstance(exc, ConnectionResetError):
+        return "reset"
+    if isinstance(exc, ConnectionRefusedError):
+        return "reddedildi"
+    errno_value = getattr(exc, "errno", None)
+    winerror_value = getattr(exc, "winerror", None)
+    return (
+        f"{type(exc).__name__}"
+        f"(errno={errno_value},winerror={winerror_value})"
+    )[:120]
+
+
 def _public_ipv4_answers(obj) -> List[str]:
     """Basarili DoH JSON'indan yalniz genel kullanima acik IPv4 adreslerini al."""
     if not isinstance(obj, dict) or obj.get("Status") != 0:
@@ -150,6 +170,7 @@ def doh_resolve(
     failures = []
     query = urllib.parse.urlencode({"name": ascii_host, "type": "A"})
     for label, endpoint in _DOH_ENDPOINTS:
+        started = time.monotonic()
         url = f"{endpoint}?{query}"
         req = urllib.request.Request(
             url,
@@ -163,9 +184,15 @@ def doh_resolve(
                 if status != 200:
                     raise ValueError(f"HTTP {status}")
                 ips = _public_ipv4_answers(json.load(resp))
-            if failures and log:
+            if log:
                 try:
-                    log(f"DoH | yedek saglayici kullanildi | {label}")
+                    elapsed_ms = round((time.monotonic() - started) * 1000)
+                    fallback = " | yedek=true" if failures else ""
+                    log(
+                        f"DoH | host={ascii_host} | saglayici={label} | "
+                        f"sonuc=basarili | ip_sayisi={len(ips)} | "
+                        f"sure_ms={elapsed_ms}{fallback}"
+                    )
                 except Exception:
                     pass
             return ips
@@ -174,7 +201,11 @@ def doh_resolve(
             failures.append(f"{label}: {detail}")
             if log:
                 try:
-                    log(f"DoH | {label} basarisiz | {detail}")
+                    elapsed_ms = round((time.monotonic() - started) * 1000)
+                    log(
+                        f"DoH | host={ascii_host} | saglayici={label} | "
+                        f"sonuc=basarisiz | sure_ms={elapsed_ms} | {detail}"
+                    )
                 except Exception:
                     pass
 
@@ -286,6 +317,9 @@ class DiscordUnblocker:
     def _resolve(self, host: str) -> List[str]:
         cached = self._ip_cache.get(host)
         if cached and cached[1] > time.time():
+            self._l(
+                f"DNS | host={host} | sonuc=cache | ip_sayisi={len(cached[0])}"
+            )
             return cached[0]
         ips = doh_resolve(host, log=self._l)
         if ips:
@@ -297,7 +331,13 @@ class DiscordUnblocker:
         return self._resolve(host)
 
     # --- parcali ClientHello ile yeniden-denemeli upstream baglantisi ---
-    def _open_upstream(self, hello: bytes, ips: List[str], attempts: int = 7):
+    def _open_upstream(
+        self,
+        hello: bytes,
+        ips: List[str],
+        attempts: int = 7,
+        host: str = "bilinmiyor",
+    ):
         """ClientHello'yu gonderir ve sunucudan ServerHello gelene kadar
         (gerekirse farkli IP/TLS stratejileriyle) tekrar dener.
 
@@ -311,6 +351,10 @@ class DiscordUnblocker:
 
         Doner: (server_soketi, sunucudan_gelen_ilk_bloklar) veya (None, None)."""
         if not ips or attempts <= 0:
+            self._l(
+                f"TLS | host={host} | sonuc=basarisiz | neden=hedef_yok "
+                f"| ip_sayisi={len(ips)} | deneme_butcesi={attempts}"
+            )
             return None, None
 
         frag = fragment_client_hello(hello)
@@ -330,6 +374,8 @@ class DiscordUnblocker:
 
         for i, (ip, client_hello, fragmented) in enumerate(candidates[:attempts]):
             se = None
+            started = time.monotonic()
+            strategy = "parcali" if fragmented else "dogrudan"
             try:
                 se = socket.create_connection((ip, 443), timeout=8)
                 se.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -338,25 +384,43 @@ class DiscordUnblocker:
                 first = se.recv(65536)
                 if first and first[0] == 0x16:  # 0x16 = TLS ServerHello/handshake
                     se.settimeout(None)
-                    if not fragmented:
-                        self._l(
-                            "unblock: parcali TLS yanit vermedi; "
-                            "alternatif dogrudan TLS yolu kullanildi"
-                        )
+                    elapsed_ms = round((time.monotonic() - started) * 1000)
+                    self._l(
+                        f"TLS | host={host} | deneme={i + 1}/{attempts} | "
+                        f"yol={strategy} | hedef={ip}:443 | "
+                        f"sonuc=basarili | sure_ms={elapsed_ms}"
+                    )
                     return se, first
                 # bos veya beklenmedik yanit -> DPI reseti; tekrar dene
                 se.close()
-            except OSError:
+                elapsed_ms = round((time.monotonic() - started) * 1000)
+                response = "bos_yanit" if not first else "tls_disi_yanit"
+                self._l(
+                    f"TLS | host={host} | deneme={i + 1}/{attempts} | "
+                    f"yol={strategy} | hedef={ip}:443 | sonuc={response} "
+                    f"| sure_ms={elapsed_ms}"
+                )
+            except OSError as exc:
                 if se:
                     try:
                         se.close()
                     except OSError:
                         pass
+                elapsed_ms = round((time.monotonic() - started) * 1000)
+                self._l(
+                    f"TLS | host={host} | deneme={i + 1}/{attempts} | "
+                    f"yol={strategy} | hedef={ip}:443 | "
+                    f"sonuc={_socket_error_text(exc)} | sure_ms={elapsed_ms}"
+                )
             # Ilk parcali/dogrudan IP taramasini hizli tut. Yalniz kalan parcali
             # tekrar denemelerini taze DPI karar pencerelerine yay.
             if i + 1 < min(len(candidates), attempts) and i + 1 >= probe_count:
                 retry_index = i + 1 - probe_count
                 time.sleep(0.5 + retry_index * 0.25)
+        self._l(
+            f"TLS | host={host} | sonuc=basarisiz | "
+            f"tum_denemeler_bitti={min(len(candidates), attempts)}"
+        )
         return None, None
 
     # --- tek baglanti islemesi ---
@@ -366,6 +430,7 @@ class DiscordUnblocker:
             client.settimeout(10)
             first = _recv_full_client_hello(client)  # ClientHello'nun tamami
             if not first:
+                self._l("TLS | host=bilinmiyor | sonuc=istemci_verisi_yok")
                 return
             sni = parse_sni(first)
             # Kotuye kullanim engeli: SNI VERILMIS ama whitelist disi bir hedefse
@@ -374,17 +439,17 @@ class DiscordUnblocker:
             # whitelist'te) duseriz — bu bazi Discord baglantilarinin calismasi icin
             # gereklidir ve keyfi tunele izin vermez.
             if sni and sni.lower() not in ALLOWED_HOSTS:
-                self._l(f"unblock: izin verilmeyen hedef reddedildi ({sni})")
+                self._l(f"TLS | host={sni} | sonuc=izin_verilmeyen_hedef")
                 return
             host = sni if sni else BLOCKED_HOSTS[0]
             ips = self._resolve(host)
             if not ips:
-                self._l(f"unblock: {host} IP cozulemedi")
+                self._l(f"DNS | host={host} | sonuc=ip_cozulemedi")
                 return
 
-            server, server_first = self._open_upstream(first, ips)
+            server, server_first = self._open_upstream(first, ips, host=host)
             if server is None:
-                self._l(f"unblock: {host} el sikismasi tum denemelerde resetlendi")
+                self._l(f"TLS | host={host} | sonuc=tunel_kurulamadi")
                 return
 
             client.settimeout(None)
@@ -393,8 +458,11 @@ class DiscordUnblocker:
             t = threading.Thread(target=self._pump, args=(client, server), daemon=True)
             t.start()
             self._pump(server, client)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._l(
+                f"TLS | host={locals().get('host', 'bilinmiyor')} | "
+                f"sonuc=beklenmeyen_hata | hata={_socket_error_text(exc)}"
+            )
         finally:
             for s in (client, server):
                 if s:
@@ -443,16 +511,20 @@ class DiscordUnblocker:
             srv.bind(("127.0.0.1", 443))
             srv.listen(16)
         except OSError as e:
-            self._l(f"unblock: 443 portu dinlenemedi ({e})")
+            self._l(
+                f"RELAY | adres=127.0.0.1:443 | sonuc=baslatilamadi | "
+                f"hata={_socket_error_text(e)}"
+            )
             return False
         self._srv = srv
         self._running = True
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
-        self._l("unblock: yerel role 127.0.0.1:443 dinliyor")
+        self._l("RELAY | adres=127.0.0.1:443 | sonuc=dinliyor")
         return True
 
     def stop(self):
+        was_running = self._running or self._srv is not None
         self._running = False
         if self._srv:
             try:
@@ -460,6 +532,8 @@ class DiscordUnblocker:
             except OSError:
                 pass
         self._srv = None
+        if was_running:
+            self._l("RELAY | adres=127.0.0.1:443 | sonuc=durduruldu")
 
     def is_active(self) -> bool:
         return self._running

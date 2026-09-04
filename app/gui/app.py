@@ -411,7 +411,9 @@ class DPortApp(ctk.CTk):
         self._dns_backup_mem = {}
         self._legacy_dns_backup = None
         self._unblocker = DiscordUnblocker(
-            log=lambda m: self.log_mgr.console(f"unblock: {m}")
+            # ISS/DPI teshisinin kritik satirlari yalniz konsolda kaybolmasin;
+            # ayni zaman damgali kalici dport.log dosyasina da yazilsin.
+            log=lambda m: self.log_mgr.write(f"unblock: {m}")
         )
 
         # Onceki oturumdan (cokme/zorla kapatma) kalmis olabilecek hosts
@@ -455,7 +457,11 @@ class DPortApp(ctk.CTk):
             pass
         atexit.register(self._disable_discord_unblock)
 
-        self.log_mgr.console(f"{L['title']} v{self.VERSION} başlatıldı")
+        mode = "kurulu" if getattr(sys, "frozen", False) else "kaynak"
+        self.log_mgr.write(
+            f"SESSION | {L['title']} v{self.VERSION} baslatildi | "
+            f"mod={mode} | pid={os.getpid()} | admin={self._is_admin()}"
+        )
 
         self.title(f"{L['title']}")
         self.resizable(False, False)
@@ -1888,8 +1894,42 @@ class DPortApp(ctk.CTk):
     def _check_updates_on_start(self):
         self._update_checks.request()
 
+    def _update_connection_is_active(self) -> bool:
+        """Guncelleme yalniz tamamen pasif/temiz ag durumunda baslayabilir."""
+        if getattr(self, "_connection_action_mode", "activate") == "restore":
+            return True
+        try:
+            if self._unblocker.is_active():
+                return True
+        except Exception:
+            return True
+        try:
+            if secure_store.load_dns_backup():
+                return True
+        except Exception:
+            return True
+        try:
+            return bool(is_hosts_redirect_active())
+        except Exception:
+            return True
+
+    def _report_update_cancelled_for_active_connection(self) -> None:
+        self.log_mgr.write("UPDATE | baglanti aktif; guncelleme iptal edildi")
+        self._update_download_active = False
+        self._notify(L["update_title"], L["update_active_blocked"])
+        if self._alive and not self._busy:
+            self._st(L["st_ready"], SUB)
+
+    def _cancel_update_if_connection_active(self) -> bool:
+        if not self._update_connection_is_active():
+            return False
+        self._report_update_cancelled_for_active_connection()
+        return True
+
     def _check_update_clicked(self):
         if self._update_download_active:
+            return
+        if self._cancel_update_if_connection_active():
             return
         self._st(L["st_update_checking"], YELL)
         self._update_checks.request(manual=True)
@@ -1904,6 +1944,8 @@ class DPortApp(ctk.CTk):
                 self._st(L["st_update_unavailable"], YELL)
             return
         if info.get("available"):
+            if self._cancel_update_if_connection_active():
+                return
             self._prompt_update(info)
         elif manual:
             self._notify(L["update_title"],
@@ -1920,6 +1962,8 @@ class DPortApp(ctk.CTk):
                 self._update_download_active = False
 
     def _prompt_update(self, info: dict):
+        if self._cancel_update_if_connection_active():
+            return
         version = info.get("version") or "?"
         if not info.get("download_url"):
             if self._ask(
@@ -1943,6 +1987,12 @@ class DPortApp(ctk.CTk):
                 raise
 
     def _download_and_launch_update(self, info: dict):
+        if self._update_connection_is_active():
+            # Worker kontrolunde aktif oldugu KESINLESTI. UI callback'i
+            # calisana kadar durum degisse bile baslatilmayan indirme sessizce
+            # kaybolmasin; iptal sonucu kosulsuz raporlanir.
+            self.after(0, self._report_update_cancelled_for_active_connection)
+            return
         # F3: installer ARTIK kullanici-yazilabilir %APPDATA% altina indirilmez.
         # ACL-korumali staging dizini (%ProgramData%\DPort\updates, Users = yalniz
         # oku/calistir) hazirlanamazsa indirme HIC yapilmaz — guvensiz konuma
@@ -1970,6 +2020,8 @@ class DPortApp(ctk.CTk):
             return
 
         def _launch_inner():
+            if self._cancel_update_if_connection_active():
+                return
             if self._ask(L["update_title"], L["update_downloaded"]):
                 # TOCTOU: dosya, hash'i KILITLI HANDLE uzerinden yeniden
                 # hesaplanir ve handle ACIKKEN calistirilir. Handle FILE_SHARE_READ

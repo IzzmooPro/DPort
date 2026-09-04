@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.15-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.16-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.15 kurulum dosyası: `DPort-Setup-3.15.exe`</sub>
+<sub>v3.16 test hazırlığında; henüz yayımlanmadı. Planlanan dosya: `DPort-Setup-3.16.exe`. İndirme bağlantısı son yayımlanan sürüme gider.</sub>
 
 </div>
 
@@ -18,7 +18,7 @@
 
 ## Arayüz
 
-Güncel v3.15 uygulamasından gerçek ekran görüntüsü:
+v3.15 uygulamasından gerçek ekran görüntüsü (v3.16 için yeni görsel henüz alınmadı):
 
 <p align="center">
   <img src="docs/images/dport-v3.15-main.png" alt="DPort v3.15 ana ekranı: bağlantı kapalı ve Bağlantıyı Etkinleştir düğmesi" width="350">
@@ -130,7 +130,14 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.15'te ne değişti?
+## v3.16'da ne değişti? (test hazırlığı)
+
+- Bağlantı pasifken açık kalan DPort'un doğrulanmış kurulu süreci, kurulum sırasında Restart Manager'ın 30 saniyelik beklemesine girmeden kapatılır ve kuruluma devam edilir.
+- Bağlantı aktifse güncelleme iptal edilir; kullanıcıdan önce **Varsayılana Dön** işlemini tamamlaması istenir. Kontrol, indirme öncesinde ve installer başlatılmadan hemen önce tekrarlanır.
+- Elle çalıştırılan installer da korumalı DNS yedeği veya DPort hosts yönlendirmesi algılarsa zorla kapatma yapmaz. Kurulumdan sonra DPort otomatik yeniden başlatılmaz.
+- ISS/DPI sorunlarını ayırt etmek için DoH ve Discord TLS denemeleri; hedef, yöntem, sonuç ve süre bilgileriyle `dport.log` dosyasına kaydedilir. Mesaj içeriği, Discord hesabı, TLS verisi veya kullanıcı IP'si kaydedilmez.
+
+## Önceki sürüm: v3.15
 
 - Korumalı DNS yedeği diske yazılıp doğrulanamazsa bağlantı etkinleştirilmez.
 - Yeni yedek hazır olmadan eski kurtarma dosyası değiştirilmez; geçerli eski yedek biçimleri desteklenir.
@@ -206,7 +213,7 @@ python -m unittest discover -s tests
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.15. Download:** [latest published release](https://github.com/IzzmooPro/DPort/releases/latest) (`DPort-Setup-3.15.exe`).
+**Version 3.16 is being tested and is not published yet.** Planned installer: `DPort-Setup-3.16.exe`. Download the [latest published release](https://github.com/IzzmooPro/DPort/releases/latest).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 

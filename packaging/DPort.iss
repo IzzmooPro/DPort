@@ -6,7 +6,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "DPort"
-#define MyAppVersion "3.15"
+#define MyAppVersion "3.16"
 #define MyAppPublisher "IzzmooPro"
 #define MyAppExeName "DPort.exe"
 #define MyAppId "{{7C9E6A54-2D3B-4F81-A6E2-1B0C9D8E7F60}"
@@ -42,8 +42,11 @@ UninstallDisplayName={#MyAppName} {#MyAppVersion}
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 
-; Kurulum sirasinda calisan DPort'u kapatmaya calis (guncelleme icin)
-CloseApplications=yes
+; Restart Manager `force` kipinde bile once 30 saniye nazik kapanis bekler.
+; DPort pasifse [Code]/PrepareToInstall, TAM kurulu exe yolunu dogrulayip yalniz
+; o sureci hemen kapatir. Aktif/bilinmeyen ag durumunda kurulum fail-closed
+; durur. Restart Manager'i kapatmak bu gereksiz 30 saniyeyi tamamen kaldirir.
+CloseApplications=no
 RestartApplications=no
 
 ; Cikti
@@ -57,6 +60,12 @@ WizardStyle=modern
 [Languages]
 Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+turkish.ActiveConnectionBlock=Güncelleme için önce DPort'ta Varsayılana Dönün. Kurulum iptal edildi.
+english.ActiveConnectionBlock=Restore Defaults in DPort before updating. Setup was cancelled.
+turkish.PassiveCloseFailed=DPort güvenli biçimde kapatılamadı. Kurulum iptal edildi; DPort'u kapatıp yeniden deneyin.
+english.PassiveCloseFailed=DPort could not be closed safely. Setup was cancelled; close DPort and try again.
 
 [Tasks]
 ; Bayrak yok = kutu VARSAYILAN OLARAK ISARETLI gelir (masaustu kisayolu olusur).
@@ -1085,6 +1094,109 @@ begin
            + ' "' + TASK_NAME + '" ve "' + LEGACY_TASK + '" gorevlerini elle'
            + ' silip kurulumu tekrar deneyin.', mbError, MB_OK);
   RaiseException('DPort guvenli kurtarma gorevi kurulamadi: ' + Problem);
+end;
+
+{ DPort pasifse Restart Manager sureci beklemeden zorla kapatabilir. Korumali
+  DNS yedegi veya hosts yonlendirmesi varsa normal geri alma tamamlanmadan
+  sureci oldurmek yasaktir; kullanici once Varsayilana Don yapar. }
+function ConnectionRequiresRestore(): Boolean;
+var
+  Lines: TArrayOfString;
+  HostsPath, StatePath: string;
+begin
+  Result := True;
+  StatePath := ExpandConstant('{commonappdata}\DPort\dns_state.json');
+  if FileExists(StatePath) then exit;
+  HostsPath := HostsFilePath();
+  if FileExists(HostsPath) then begin
+    if not LoadStringsFromFile(HostsPath, Lines) then exit;
+    if HostsHasDPortResidue(Lines) then exit;
+  end;
+  Result := False;
+end;
+
+{ Restart Manager 30 saniye bekledigi icin pasif DPort'u kendimiz kapatiriz.
+  Guvenlik sinirlari:
+    - Yalniz ACL/reparse/canonical kontrollerinden gecen kurulu hedef kullanilir.
+    - WMI sonucunda ExecutablePath bu hedefle BIREBIR eslesen PID'ler kapatilir.
+    - Ayni adli kaynak/test DPort.exe veya baska bir surec ASLA kapatilmaz.
+    - Serbest bicimli surec adi/komut satiri shell'e yerlestirilmez. }
+function StopVerifiedPassiveDPort(): Boolean;
+var
+  SafeExe, Reason, QuotedPath, Params: string;
+  Code: Integer;
+  Output: TExecOutput;
+begin
+  Result := False;
+  SafeExe := ExpandConstant('{app}\{#MyAppExeName}');
+
+  { Ilk kurulumda kapatilacak kurulu hedef yoktur. }
+  if not FileExists(SafeExe) then begin
+    Result := True;
+    exit;
+  end;
+
+  if not PathIsVerifiedInstall(SafeExe, Reason) then begin
+    Log('DPort: pasif surec kapatma hedefi dogrulanamadi: ' + Reason);
+    exit;
+  end;
+
+  { Ilk kontrolden sonra kullanici baglantiyi etkinlestirmis olabilir. Zorla
+    kapatmaya EN YAKIN noktada durumu yeniden oku. }
+  if ConnectionRequiresRestore() then begin
+    Log('DPort: pasif kapatma oncesi ikinci kontrolde aktif durum algilandi');
+    exit;
+  end;
+
+  QuotedPath := SafeExe;
+  StringChangeEx(QuotedPath, '''', '''''', True);
+  Params := '-NoProfile -NonInteractive -Command "$ErrorActionPreference=' +
+            '''Stop''; $target=''' + QuotedPath + ''';' +
+            ' $all=@(Get-CimInstance Win32_Process -Filter '
+            + '''Name=''''DPort.exe''''''' + ');' +
+            ' $mine=@($all | Where-Object {' +
+            ' [StringComparer]::OrdinalIgnoreCase.Equals($_.ExecutablePath,$target) });' +
+            ' foreach($p in $mine){ Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop };' +
+            ' Start-Sleep -Milliseconds 100;' +
+            ' $left=@(Get-CimInstance Win32_Process -Filter '
+            + '''Name=''''DPort.exe''''''' + ' | Where-Object {' +
+            ' [StringComparer]::OrdinalIgnoreCase.Equals($_.ExecutablePath,$target) });' +
+            ' if($left.Count -ne 0){ exit 3 }"';
+  try
+    if not ExecAndCaptureOutput(
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Params, '', SW_HIDE, ewWaitUntilTerminated, Code, Output) then begin
+      Log('DPort: pasif surec kapatma komutu baslatilamadi');
+      exit;
+    end;
+  except
+    Log('DPort: pasif surec kapatma hatasi: ' + GetExceptionMessage);
+    exit;
+  end;
+  if (Code <> 0) or Output.Error or
+     (Trim(CapturedLinesText(Output.StdErr)) <> '') then begin
+    Log('DPort: pasif surec kapatma dogrulanamadi; kod=' + IntToStr(Code));
+    exit;
+  end;
+  Log('DPort: pasif kurulu surec beklemeden kapatildi/dogrulandi');
+  Result := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): string;
+begin
+  Result := '';
+  if ConnectionRequiresRestore() then begin
+    Log('DPort: aktif veya bilinmeyen baglanti durumu; zorla kapatma oncesi kurulum iptal edildi');
+    Result := ExpandConstant('{cm:ActiveConnectionBlock}');
+    exit;
+  end;
+  if not StopVerifiedPassiveDPort() then begin
+    { Ikinci kontrol aktif durumu yakaladiysa dogru yonlendirmeyi goster. }
+    if ConnectionRequiresRestore() then
+      Result := ExpandConstant('{cm:ActiveConnectionBlock}')
+    else
+      Result := ExpandConstant('{cm:PassiveCloseFailed}');
+  end;
 end;
 
 { Kisayol/masaustu ikonu bos gorunmesin diye kurulum sonunda shell ikon

@@ -378,6 +378,9 @@ class _UpdateStub:
     def _ask(self, *a):
         return False
 
+    def _update_connection_is_active(self):
+        return False
+
     def run_scheduled(self):
         """Tk'nin sonradan calistirmasini taklit eder — burada NameError patlardi."""
         for func in list(self.scheduled):
