@@ -24,6 +24,8 @@ import errno
 import ipaddress
 import json
 import queue
+import select
+import itertools
 import os
 import ssl
 import stat
@@ -162,8 +164,14 @@ def doh_resolve(host, timeout=8, log=None, *, total_timeout=24, cancel=None):
     event = threading.Event()
     deadline = time.monotonic() + total_timeout
     result = queue.Queue(maxsize=1)
-    if (cancel is not None and cancel.is_set()) or not _DOH_SLOTS.acquire(blocking=False):
-        raise DohResolutionError("DoH iptal edildi veya cozumleyici mesgul")
+    while True:
+        if cancel is not None and cancel.is_set():
+            raise DohResolutionError("DoH iptal edildi")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DohResolutionError("DoH kapasite bekleme suresi doldu")
+        if _DOH_SLOTS.acquire(timeout=min(0.05, remaining)):
+            break
     def report(message):
         if log and not event.is_set():
             log(message)
@@ -404,6 +412,9 @@ class DiscordUnblocker:
         self._socket_lock = threading.RLock()
         self._sockets = set()
         self._stop_event = threading.Event()
+        self._dns_lock = threading.Lock()
+        self._dns_pending = {}
+        self._connection_ids = itertools.count(1)
 
     def _track(self, sock, event):
         with self._socket_lock:
@@ -435,16 +446,47 @@ class DiscordUnblocker:
 
     # --- IP cozumleme (cache'li) ---
     def _resolve(self, host: str, cancel=None) -> List[str]:
-        cached = self._ip_cache.get(host)
-        if cached and cached[1] > time.time():
-            self._l(
-                f"DNS | host={host} | sonuc=cache | ip_sayisi={len(cached[0])}"
-            )
-            return cached[0]
-        ips = doh_resolve(host, log=self._l, cancel=cancel)
-        if ips and (cancel is None or not cancel.is_set()):
-            self._ip_cache[host] = (ips, time.time() + 300)
-        return ips
+        cancel = cancel if cancel is not None else self._stop_event
+        key = (host, cancel)
+        with self._dns_lock:
+            if cancel.is_set():
+                raise DohResolutionError("DoH iptal edildi")
+            cached = self._ip_cache.get(host)
+            if cached and cached[1] > time.time():
+                return list(cached[0])
+            pending = self._dns_pending.get(key)
+            leader = pending is None
+            if leader:
+                pending = {'done': threading.Event(), 'ips': None, 'error': None}
+                self._dns_pending[key] = pending
+        if not leader:
+            self._l(f"DNS | host={host} | sonuc=ortak_sorgu_bekleniyor")
+            deadline = time.monotonic() + 24
+            while not pending['done'].wait(0.05):
+                if cancel.is_set() or time.monotonic() >= deadline:
+                    raise DohResolutionError("Ortak DNS beklemesi iptal veya timeout")
+            if cancel.is_set():
+                raise DohResolutionError("DoH iptal edildi")
+            if pending['error'] is not None:
+                raise DohResolutionError("Ortak DNS sorgusu basarisiz") from pending['error']
+            return list(pending['ips'])
+        try:
+            ips = doh_resolve(host, log=self._l, cancel=cancel)
+            with self._dns_lock:
+                if cancel.is_set():
+                    raise DohResolutionError("DoH iptal edildi")
+                if ips:
+                    self._ip_cache[host] = (list(ips), time.time() + 300)
+                pending['ips'] = list(ips)
+            return ips
+        except BaseException as exc:
+            pending['error'] = exc
+            self._l(f"DNS | host={host} | sonuc=cozumleme_basarisiz | hata={type(exc).__name__}")
+            raise
+        finally:
+            with self._dns_lock:
+                self._dns_pending.pop(key, None)
+                pending['done'].set()
 
     def preflight(self, host: str = "discord.com") -> List[str]:
         """Relay acilmadan once guvenli cozumlemeyi dene ve sonucu cache'le."""
@@ -461,6 +503,7 @@ class DiscordUnblocker:
         host: str = "bilinmiyor",
         stop_event=None,
         total_timeout: float = 24,
+        connection_id: int = 0,
     ):
         """ClientHello'yu gonderir ve sunucudan ServerHello gelene kadar
         (gerekirse farkli IP/TLS stratejileriyle) tekrar dener.
@@ -479,7 +522,7 @@ class DiscordUnblocker:
         deadline = time.monotonic() + total_timeout
         if not ips or attempts <= 0:
             self._l(
-                f"TLS | host={host} | sonuc=basarisiz | neden=hedef_yok "
+                f"TLS | id={connection_id} | host={host} | sonuc=basarisiz | neden=hedef_yok "
                 f"| ip_sayisi={len(ips)} | deneme_butcesi={attempts}"
             )
             return None, None
@@ -499,13 +542,14 @@ class DiscordUnblocker:
 
         for i, (ip, client_hello, fragmented) in enumerate(candidates[:attempts]):
             if stop_event.is_set() or time.monotonic() >= deadline:
-                self._l(f"TLS | host={host} | sonuc=iptal_veya_sure_siniri")
+                self._l(f"TLS | id={connection_id} | host={host} | sonuc=iptal_veya_sure_siniri")
                 return None, None
             se = None
             started = time.monotonic()
             strategy = "parcali" if fragmented else "dogrudan"
             try:
                 se = socket.create_connection((ip, 443), timeout=max(0.001, min(8, deadline - time.monotonic())))
+                self._l(f"TCP | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | sonuc=baglandi | sure_ms={round((time.monotonic()-started)*1000)}")
                 if not self._track(se, stop_event):
                     return None, None
                 se.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -520,7 +564,7 @@ class DiscordUnblocker:
                     se.settimeout(None)
                     elapsed_ms = round((time.monotonic() - started) * 1000)
                     self._l(
-                        f"TLS | host={host} | deneme={i + 1}/{attempts} | "
+                        f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "
                         f"yol={strategy} | hedef={ip}:443 | "
                         f"sonuc=ilk_tls_yaniti | sure_ms={elapsed_ms}"
                     )
@@ -530,7 +574,7 @@ class DiscordUnblocker:
                 elapsed_ms = round((time.monotonic() - started) * 1000)
                 response = "bos_yanit" if not first else "tls_disi_yanit"
                 self._l(
-                    f"TLS | host={host} | deneme={i + 1}/{attempts} | "
+                    f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "
                     f"yol={strategy} | hedef={ip}:443 | sonuc={response} "
                     f"| sure_ms={elapsed_ms}"
                 )
@@ -542,7 +586,7 @@ class DiscordUnblocker:
                         pass
                 elapsed_ms = round((time.monotonic() - started) * 1000)
                 self._l(
-                    f"TLS | host={host} | deneme={i + 1}/{attempts} | "
+                    f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "
                     f"yol={strategy} | hedef={ip}:443 | "
                     f"sonuc={_socket_error_text(exc)} | sure_ms={elapsed_ms}"
                 )
@@ -552,7 +596,7 @@ class DiscordUnblocker:
                 retry_index = i + 1 - probe_count
                 stop_event.wait(min(0.5 + retry_index * 0.25, max(0, deadline - time.monotonic())))
         self._l(
-            f"TLS | host={host} | sonuc=basarisiz | "
+            f"TLS | id={connection_id} | host={host} | sonuc=basarisiz | "
             f"tum_denemeler_bitti={min(len(candidates), attempts)}"
         )
         return None, None
@@ -560,6 +604,10 @@ class DiscordUnblocker:
     # --- tek baglanti islemesi ---
     def _handle(self, client: socket.socket, stop_event=None):
         server = None
+        connection_id = next(self._connection_ids)
+        phase = 'client_hello'
+        started = time.monotonic()
+        reason = 'bilinmiyor'
         closed = threading.Event()
         stop_event = stop_event or self._stop_event
         if not self._track(client, stop_event):
@@ -568,64 +616,111 @@ class DiscordUnblocker:
             client.settimeout(10)
             first = _recv_full_client_hello(client)  # ClientHello'nun tamami
             if not first:
+                reason = 'istemci_verisi_yok'
                 self._l("TLS | host=bilinmiyor | sonuc=istemci_verisi_yok")
                 return
             sni = parse_sni(first)
             # Missing, malformed and non-allowlisted SNI must never choose a
             # substitute destination. Do not persist untrusted host strings.
             if not sni or sni not in ALLOWED_HOSTS:
+                reason = 'gecersiz_veya_izinsiz_sni'
                 self._l("TLS | host=bilinmiyor | sonuc=gecersiz_veya_izinsiz_sni")
                 return
             host = sni
+            self._l(f"TLS | id={connection_id} | host={host} | asama=sni_okundu")
+            phase = 'dns'
+            dns_started = time.monotonic()
+            self._l(f"DNS | id={connection_id} | host={host} | asama=basladi")
             ips = self._resolve(host, cancel=stop_event)
+            self._l(f"DNS | id={connection_id} | host={host} | asama=tamamlandi | ip_sayisi={len(ips)} | sure_ms={round((time.monotonic()-dns_started)*1000)}")
             if stop_event.is_set():
                 return
             if not ips:
+                reason = 'dns_hedef_yok'
                 self._l(f"DNS | host={host} | sonuc=ip_cozulemedi")
                 return
 
-            server, server_first = self._open_upstream(first, ips, host=host, stop_event=stop_event)
+            phase = 'upstream'
+            server, server_first = self._open_upstream(first, ips, host=host, stop_event=stop_event, connection_id=connection_id)
             if server is None:
+                reason = 'upstream_kurulamadi'
                 self._l(f"TLS | host={host} | sonuc=tunel_kurulamadi")
                 return
 
             client.settimeout(None)
+            phase = 'ilk_yanit_istemciye'
             # Sunucudan gelen ilk blogu (ServerHello) istemciye ilet, sonra tunelle
             client.sendall(server_first)
+            self._l(f"TLS | id={connection_id} | host={host} | asama=ilk_yanit_iletildi | bayt={len(server_first)} | sure_ms={round((time.monotonic()-started)*1000)} | tam_oturum_dogrulanmadi=True")
             t = threading.Thread(target=self._pump,
-                                 args=(client, server, stop_event, closed, host), daemon=True)
+                                 args=(client, server, stop_event, closed, host, 'istemci_sunucu', connection_id, True), daemon=True)
             t.start()
-            self._pump(server, client, stop_event, closed, host)
+            phase = 'tunel'
+            reason = self._pump(server, client, stop_event, closed, host, 'sunucu_istemci', connection_id, True)
         except Exception as exc:
+            reason = 'zaman_asimi' if isinstance(exc, TimeoutError) else 'islem_hatasi'
             if not stop_event.is_set():
                 self._l(
-                    f"TLS | host={locals().get('host', 'bilinmiyor')} | "
+                    f"TLS | id={connection_id} | asama={phase} | host={locals().get('host', 'bilinmiyor')} | "
                     f"sonuc=beklenmeyen_hata | hata={_socket_error_text(exc)}"
                 )
         finally:
             closed.set()
-            self._l(f"TUNNEL | host={locals().get('host', 'bilinmiyor')} | sonuc=kapandi")
+            if stop_event.is_set():
+                reason = 'dport_durdurdu'
+            self._l(f"TUNNEL | id={connection_id} | host={locals().get('host', 'bilinmiyor')} | sonuc=kapandi | asama={phase} | neden={reason} | sure_ms={round((time.monotonic()-started)*1000)}")
             for s in (client, server):
                 if s:
                     self._close_socket(s)
 
     def _pump(self, a: socket.socket, b: socket.socket, stop_event=None,
-              closed=None, host="bilinmiyor"):
+              closed=None, host="bilinmiyor", direction="bilinmiyor", connection_id=0,
+              observe_wait=False):
         stop_event = stop_event if stop_event is not None else self._stop_event
+        operation = 'recv'
+        count = 0
+        started = time.monotonic()
+        last_progress = started
+        warned = False
+        reason = 'bilinmiyor'
         try:
             while True:
+                operation = 'recv'
+                if observe_wait:
+                    if stop_event.is_set() or (closed is not None and closed.is_set()):
+                        reason = 'dport_durdurdu' if stop_event.is_set() else 'diger_yon_kapandi'
+                        break
+                    ready, _, _ = select.select([a], [], [], 1)
+                    if not ready:
+                        idle = time.monotonic() - last_progress
+                        if idle >= 30 and not warned:
+                            warned = True
+                            self._l(f"TUNNEL | id={connection_id} | host={host} | yon={direction} | sonuc=veri_bekleniyor | bos_sure_ms={round(idle*1000)} | aktarilan_bayt={count} | ariza_kaniti=False")
+                        continue
                 d = a.recv(65536)
                 if not d:
+                    reason = 'karsi_uc_eof'
                     break
+                operation = 'send'
                 b.sendall(d)
-        except OSError as exc:
+                count += len(d)
+                last_progress = time.monotonic()
+        except (OSError, ValueError) as exc:
+            # select can see an already-closed fd during concurrent stop.
+            reason = 'zaman_asimi' if isinstance(exc, TimeoutError) else 'soket_hatasi'
             if not stop_event.is_set() and not (closed is not None and closed.is_set()):
-                self._l(f"TUNNEL | host={host} | sonuc=aktarim_hatasi | hata={_socket_error_text(exc)}")
+                self._l(f"TUNNEL | id={connection_id} | host={host} | yon={direction} | islem={operation} | sonuc=aktarim_hatasi | hata={_socket_error_text(exc)}")
         finally:
+            if stop_event.is_set():
+                reason = 'dport_durdurdu'
+            elif closed is not None and closed.is_set():
+                reason = 'diger_yon_kapandi'
+            self._l(f"TUNNEL | id={connection_id} | host={host} | yon={direction} | aktarilan_bayt={count} | sure_ms={round((time.monotonic()-started)*1000)} | sonuc=aktarim_bitti | neden={reason}")
             try:
                 b.shutdown(socket.SHUT_WR)
             except OSError:
                 pass
+        return reason
 
     # --- role dongusu ---
     def _serve(self, srv, event):
@@ -669,7 +764,8 @@ class DiscordUnblocker:
         was_running = self._running or self._srv is not None
         self._running = False
         self._stop_event.set()
-        self._ip_cache.clear()
+        with self._dns_lock:
+            self._ip_cache.clear()
         with self._socket_lock:
             sockets = list(self._sockets)
         for sock in sockets:

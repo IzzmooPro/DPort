@@ -97,7 +97,7 @@ class InstallerActiveGuard(unittest.TestCase):
         if not compiler.is_file():
             self.skipTest('Inno Setup compiler unavailable')
         logic = self.text[self.text.index('function InitializeUninstall():'):
-                          self.text.index('function PrepareToInstall(')]
+                          self.text.index('procedure InitializeUninstallProgressForm(')]
         # Run the real gate in a non-installing, non-elevated harness. Suppress
         # only dialogs, not the active-state or process-stop decisions.
         logic = logic.replace('UninstallSilent', 'True')
@@ -112,6 +112,8 @@ PrivilegesRequired=lowest
 OutputBaseFilename=guard-test
 [Code]
 var Active, StopOK: Boolean; Calls: Integer;
+    DeleteUserSettings, DeleteUserLog: Boolean; UninstallUserDataPath: string;
+    UninstallOptionsAccepted, UserUninstallUI: Boolean;
 function ConnectionRequiresRestore(): Boolean;
 begin Result := Active; end;
 function StopVerifiedPassiveDPort(): Boolean;
@@ -126,7 +128,7 @@ begin
   Active := False; StopOK := False; Calls := 0;
   if (not InitializeUninstall()) and (Calls = 1) then Rows[1] := 'stop_failed:OK';
   StopOK := True; Calls := 0;
-  if InitializeUninstall() and (Calls = 1) then Rows[2] := 'passive:OK';
+  if InitializeUninstall() and (Calls = 1) and (not DeleteUserSettings) and (not DeleteUserLog) then Rows[2] := 'passive:OK';
   SaveStringsToFile(ExpandConstant('{param:Out}'), Rows, False);
   Result := False;
 end;

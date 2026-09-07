@@ -13,6 +13,7 @@ import socket
 import threading
 import subprocess
 import ctypes
+import math
 import customtkinter as ctk
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -177,16 +178,28 @@ def _apply_win_icon(win):
         pass
 
 
+def _content_height(win, padding=6):
+    """Tk reports physical pixels; CTk geometry expects logical units."""
+    return math.ceil(win._reverse_window_scaling(win.winfo_reqheight())) + padding
+
+
+def _physical_size(win, w, h):
+    return win._apply_window_scaling(w), win._apply_window_scaling(h)
+
+
+
+
 def _place_beside(app, win, w: int, h: int):
     """Alt pencereyi ana pencerenin sag kenarina BITISIK, ALT KENARI ana
     pencereyle ayni hizada yerlestirir. Ekran sagina sigmiyorsa sola gecirir."""
     try:
         app.update_idletasks()
+        pw, ph = _physical_size(win, w, h)
         x = app.winfo_x() + app.winfo_width()
-        if x + w > win.winfo_screenwidth():          # saga sigmazsa sola
-            x = max(0, app.winfo_x() - w)
-        y = app.winfo_y() + app.winfo_height() - h   # alt kenari ana pencereyle hizala
-        y = max(0, min(y, win.winfo_screenheight() - h))
+        if x + pw > win.winfo_screenwidth():
+            x = max(0, app.winfo_x() - pw)
+        y = app.winfo_y() + app.winfo_height() - ph
+        y = max(0, min(y, win.winfo_screenheight() - ph))
         win.geometry(f"{w}x{h}+{x}+{y}")
     except Exception:
         win.geometry(f"{w}x{h}")
@@ -197,11 +210,12 @@ def _place_beside_top(app, win, w, h):
     pencereyle hizali yerlestirir. Sabitlemek icin (x, y) dondurur."""
     try:
         app.update_idletasks()
+        pw, ph = _physical_size(win, w, h)
         x = app.winfo_x() + app.winfo_width()
-        if x + w > win.winfo_screenwidth():          # saga sigmazsa sola
-            x = max(0, app.winfo_x() - w)
+        if x + pw > win.winfo_screenwidth():
+            x = max(0, app.winfo_x() - pw)
         y = app.winfo_y()                            # ust kenari ana pencereyle hizala
-        y = max(0, min(y, win.winfo_screenheight() - h))
+        y = max(0, min(y, win.winfo_screenheight() - ph))
         win.geometry(f"{w}x{h}+{x}+{y}")
         return x, y
     except Exception:
@@ -471,8 +485,9 @@ class DPortApp(ctk.CTk):
         self.W, self.H = 348, 522
         w, h = self.W, self.H
         self.update_idletasks()
-        x = (self.winfo_screenwidth() - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
+        pw, ph = _physical_size(self, w, h)
+        x = max(0, (self.winfo_screenwidth() - pw) // 2)
+        y = max(0, (self.winfo_screenheight() - ph) // 2)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
         self._apply_icon()
@@ -496,11 +511,12 @@ class DPortApp(ctk.CTk):
         (hem buyutur hem kucultur; alt bosluk/kesilme olmaz). Genislik sabit."""
         try:
             self.update_idletasks()
-            need = self.winfo_reqheight() + 6
+            need = _content_height(self)
             if need != self.H:
                 self.H = need
-                x = (self.winfo_screenwidth() - self.W) // 2
-                y = (self.winfo_screenheight() - self.H) // 2
+                pw, ph = _physical_size(self, self.W, self.H)
+                x = max(0, (self.winfo_screenwidth() - pw) // 2)
+                y = max(0, (self.winfo_screenheight() - ph) // 2)
                 self.geometry(f"{self.W}x{self.H}+{x}+{y}")
         except Exception:
             pass
@@ -2209,7 +2225,7 @@ class _AboutWindow(ctk.CTkToplevel):
         # Yuksekligi TAM icerige gore ayarla (sabit 306 alt sinir gereksiz bosluk
         # birakiyordu). UST kenar hizali ve sabit.
         self.update_idletasks()
-        h = self.winfo_reqheight() + 6
+        h = _content_height(self)
         self.transient(app)
         _dock_window(app, self, 300, h, align_top=True)
 
@@ -2290,10 +2306,11 @@ class _CloseDialog(ctk.CTkToplevel):
         # Yukseklik icerige gore (sabit 212 altta gereksiz bosluk birakiyordu).
         w = 340
         self.update_idletasks()
-        h = self.winfo_reqheight() + 4
+        h = _content_height(self, 4)
         app.update_idletasks()
-        x = app.winfo_x() + (app.winfo_width() - w) // 2
-        y = app.winfo_y() + (app.winfo_height() - h) // 3
+        pw, ph = _physical_size(self, w, h)
+        x = app.winfo_x() + (app.winfo_width() - pw) // 2
+        y = app.winfo_y() + (app.winfo_height() - ph) // 3
         self.transient(app)
         self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         self.attributes("-topmost", True)
@@ -2357,10 +2374,11 @@ class _ModalDialog(ctk.CTkToplevel):
         _apply_win_icon(self)
         self._build(title, message, confirm, ok_text, cancel_text, checkbox_text)
         self.update_idletasks()
-        w, h = 340, self.winfo_reqheight() + 4
+        w, h = 340, _content_height(self, 4)
         app.update_idletasks()
-        x = app.winfo_x() + (app.winfo_width() - w) // 2
-        y = app.winfo_y() + (app.winfo_height() - h) // 3
+        pw, ph = _physical_size(self, w, h)
+        x = app.winfo_x() + (app.winfo_width() - pw) // 2
+        y = app.winfo_y() + (app.winfo_height() - ph) // 3
         self.transient(app)
         self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         self.attributes("-topmost", True)
@@ -2518,7 +2536,7 @@ class _SettingsWindow(ctk.CTkToplevel):
         # Yuksekligi icerige gore ayarla (altta bosluk kalmasin), UST kenar hizali
         # ve sabit (kullanici tasiyamaz).
         self.update_idletasks()
-        h = self.winfo_reqheight() + 6
+        h = _content_height(self)
         self.transient(app)
         _dock_window(app, self, 320, h, align_top=True)
 

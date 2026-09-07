@@ -6,7 +6,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "DPort"
-#define MyAppVersion "3.17"
+#define MyAppVersion "3.18"
 #define MyAppPublisher "IzzmooPro"
 #define MyAppExeName "DPort.exe"
 #define MyAppId "{{7C9E6A54-2D3B-4F81-A6E2-1B0C9D8E7F60}"
@@ -86,7 +86,7 @@ Source: "..\app\assets\icon.ico"; DestDir: "{app}"; DestName: "icon.ico"; Flags:
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; IconIndex: 0
-Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; Parameters: "/SILENT /DPORTUI=1 /NORESTART"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\icon.ico"; IconIndex: 0
 
 [Run]
@@ -98,7 +98,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; Not: Kaldirma temizligi (hosts blogunu sil + failsafe gorevini sil + calisan
 ; DPort'u kapat) [Code] icinde CurUninstallStepChanged'te yapilir. Eski [UninstallRun]
 ; yaklasimi ({sys} + admin-exe --cleanup-hosts) kaldiricida "PathRedir: Not
-; initialized" ic hatasi veriyordu. Kullanici ayarlari (%APPDATA%\DPort) SILINMEZ.
+; initialized" ic hatasi veriyordu. Ayarlar/loglar yalniz acik kullanici secimiyle silinir.
 
 [Code]
 const
@@ -1189,17 +1189,229 @@ begin
   Result := True;
 end;
 
-function InitializeUninstall(): Boolean;
+{ ===== DPORT OPTIONAL USER DATA BEGIN ===== }
+var
+  DeleteUserSettings, DeleteUserLog: Boolean;
+  UninstallUserDataPath: string;
+  UninstallOptionsAccepted: Boolean;
+  UserUninstallUI: Boolean;
+
+function DataOpenDirectory(Name: string; Access, Share: LongWord;
+  Security: LongWord; Creation, Flags, Template: LongWord): LongWord;
+  external 'CreateFileW@kernel32.dll stdcall';
+function DataCloseHandle(Handle: LongWord): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+function DataLastError(): LongWord;
+  external 'GetLastError@kernel32.dll stdcall';
+
+function DeleteSelectedUserData(const DataPath: string; Settings, Logs: Boolean): Boolean;
+var
+  Canon, Cur, Prev, Target: string;
+  Paths: TArrayOfString;
+  Handles: array of LongWord;
+  I, Count: Integer;
+  Handle, Attrs, Error: LongWord;
+  IsRep: Boolean;
 begin
   Result := False;
+  if not Settings and not Logs then begin
+    Result := True;
+    exit;
+  end;
+  if not DirExists(DataPath) then begin
+    Result := not FileExists(DataPath);
+    exit;
+  end;
+  if not PathCanonical(DataPath, Canon) then exit;
+  if CompareText(ExtractFileName(Canon), 'DPort') <> 0 then exit;
+  { Pin every directory from root to leaf, without FILE_SHARE_DELETE.
+    Reparse points are opened themselves and rejected before traversing them.
+    This also prevents junction-swap races during the two file deletions. }
+  Cur := Canon;
+  while Cur <> '' do begin
+    Count := GetArrayLength(Paths);
+    SetArrayLength(Paths, Count + 1);
+    Paths[Count] := Cur;
+    Prev := Cur;
+    Cur := ExtractFileDir(Cur);
+    if (Cur = Prev) or (Length(Cur) <= 2) then break;
+  end;
+  try
+    for I := GetArrayLength(Paths) - 1 downto 0 do begin
+      Handle := DataOpenDirectory(Paths[I], 1, 3, 0, 3, $02200000, 0);
+      if Handle = $FFFFFFFF then exit;
+      Count := GetArrayLength(Handles);
+      SetArrayLength(Handles, Count + 1);
+      Handles[Count] := Handle;
+      if not PathIsReparse(Paths[I], IsRep) then exit;
+      if IsRep then exit;
+    end;
+    Result := True;
+    for I := 0 to 1 do begin
+      if ((I = 0) and Settings) or ((I = 1) and Logs) then begin
+      if I = 0 then Target := AddBackslash(Canon) + 'config.json'
+      else Target := AddBackslash(Canon) + 'dport.log';
+      Attrs := GetFileAttributesW(Target);
+      if Attrs = $FFFFFFFF then begin
+        Error := DataLastError();
+        if (Error <> 2) and (Error <> 3) then Result := False;
+      end else begin
+        if not PathIsReparse(Target, IsRep) then Result := False
+        else if IsRep or DirExists(Target) then Result := False
+        else if not DeleteFile(Target) then Result := False;
+        if GetFileAttributesW(Target) <> $FFFFFFFF then Result := False;
+      end;
+    end;
+    end;
+  finally
+    for I := GetArrayLength(Handles) - 1 downto 0 do
+      DataCloseHandle(Handles[I]);
+  end;
+end;
+{ ===== DPORT OPTIONAL USER DATA END ===== }
+
+procedure CleanupUninstallCache();
+var
+  Root, Cache, Reason, Name, VersionPart: string;
+  Entry: TFindRec;
+  I: Integer;
+  ValidName: Boolean;
+begin
+  Root := ExpandConstant('{commonappdata}\DPort');
+  Cache := Root + '\updates';
+  { Machine cache must be administrator-owned and reparse-free. No recursive
+    deletion: unknown files, subdirectories and recovery state are preserved. }
+  if DirExists(Cache) then begin
+    if not ChainIsReparseFree(Cache, Reason) or
+       not LocationIsAclProtected(Root, Reason) or
+       not LocationIsAclProtected(Cache, Reason) then begin
+      Log('DPort: guncelleme onbellegi guvenle temizlenemedi: ' + Reason);
+      exit;
+    end;
+    if FindFirst(Cache + '\DPort-Setup-*.exe', Entry) then begin
+      try
+        repeat
+          Name := Entry.Name;
+          VersionPart := Copy(Name, 13, Length(Name) - 16);
+          ValidName := (VersionPart <> '') and
+            (CompareText(Copy(Name, 1, 12), 'DPort-Setup-') = 0);
+          for I := 1 to Length(VersionPart) do
+            if Pos(Copy(VersionPart, I, 1), '0123456789.') = 0 then ValidName := False;
+          if ValidName and ((Entry.Attributes and $410) = 0) then
+            if not DeleteFile(Cache + '\' + Name) then
+              Log('DPort: eski kurulum paketi silinemedi: ' + Name);
+        until not FindNext(Entry);
+      finally FindClose(Entry); end;
+    end;
+    RemoveDir(Cache); { succeeds only when empty }
+  end;
+  if DirExists(Root) and ChainIsReparseFree(Root, Reason) and
+     LocationIsAclProtected(Root, Reason) then RemoveDir(Root);
+  { Remove only an empty, non-redirected user folder after an explicit choice. }
+  if (DeleteUserSettings or DeleteUserLog) and DirExists(UninstallUserDataPath) and
+     ChainIsReparseFree(UninstallUserDataPath, Reason) then
+    RemoveDir(UninstallUserDataPath);
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  RelaunchCode: Integer;
+begin
+  Result := False;
+  DeleteUserSettings := False;
+  DeleteUserLog := False;
+  { InitializeUninstall precedes Inno's built-in confirmation. Direct launches
+    hand off once to the SAME uninstaller with our explicit consent page.
+    Never use /VERYSILENT: no files may be removed without that page. }
+  if not UninstallSilent then begin
+    if not ShellExec('open', ExpandConstant('{uninstallexe}'),
+      '/SILENT /DPORTUI=1 /NORESTART', '', SW_SHOWNORMAL, ewNoWait, RelaunchCode) then
+      MsgBox('Kaldırma ekranı açılamadı. Hiçbir dosya silinmedi.', mbError, MB_OK);
+    exit;
+  end;
+  UserUninstallUI := (not UninstallSilent) or (ExpandConstant('{param:DPORTUI|0}') = '1');
+  UninstallOptionsAccepted := not UserUninstallUI;
+  UninstallUserDataPath := ExpandConstant('{userappdata}\DPort');
   if ConnectionRequiresRestore() then begin
-    if not UninstallSilent then
+    if UserUninstallUI then
       MsgBox('Once DPort''ta Varsayilana Don islemini tamamlayin. Kaldirma iptal edildi.', mbError, MB_OK);
     exit;
   end;
   Result := StopVerifiedPassiveDPort();
-  if not Result and not UninstallSilent then
+  if not Result and UserUninstallUI then
     MsgBox('DPort guvenli bicimde kapatilamadi. Kaldirma iptal edildi.', mbError, MB_OK);
+end;
+
+procedure InitializeUninstallProgressForm();
+var
+  Option, LogOption: TNewCheckBox;
+  Note: TNewStaticText;
+  ProceedButton, BackButton: TNewButton;
+  OldTitle, OldDescription: string;
+begin
+  if not UserUninstallUI then exit;
+  { Reuse the uninstaller's own form, before any file removal. }
+  OldTitle := UninstallProgressForm.PageNameLabel.Caption;
+  OldDescription := UninstallProgressForm.PageDescriptionLabel.Caption;
+  UninstallProgressForm.Height := ScaleY(310);
+  UninstallProgressForm.PageNameLabel.Caption := 'DPort’u kaldır';
+  UninstallProgressForm.PageDescriptionLabel.Caption := 'DPort bu bilgisayardan kaldırılacak.';
+  UninstallProgressForm.ProgressBar.Visible := False;
+  UninstallProgressForm.StatusLabel.Visible := False;
+  UninstallProgressForm.CancelButton.Visible := False;
+  Option := TNewCheckBox.Create(UninstallProgressForm);
+  LogOption := TNewCheckBox.Create(UninstallProgressForm);
+  Note := TNewStaticText.Create(UninstallProgressForm);
+  ProceedButton := TNewButton.Create(UninstallProgressForm);
+  BackButton := TNewButton.Create(UninstallProgressForm);
+  try
+    Option.Parent := UninstallProgressForm.InstallingPage;
+    Option.SetBounds(UninstallProgressForm.StatusLabel.Left, ScaleY(40),
+      UninstallProgressForm.StatusLabel.Width, ScaleY(20));
+    Option.Caption := 'Ayarlarımı sil';
+    Option.Checked := False;
+    LogOption.Parent := Option.Parent;
+    LogOption.SetBounds(Option.Left, Option.Top + Option.Height + ScaleY(6),
+      Option.Width, Option.Height);
+    LogOption.Caption := 'Log kayıtlarımı sil';
+    LogOption.Checked := False;
+    Note.Parent := Option.Parent;
+    Note.AutoSize := False;
+    Note.WordWrap := True;
+    Note.SetBounds(Option.Left, ScaleY(4), Option.Width, ScaleY(30));
+    Note.Caption := 'İsterseniz aşağıdaki verileri de silebilirsiniz. Seçmedikleriniz korunur.';
+    Option.Hint := UninstallUserDataPath + '\config.json';
+    Option.ShowHint := True;
+    LogOption.Hint := UninstallUserDataPath + '\dport.log';
+    LogOption.ShowHint := True;
+    ProceedButton.Parent := UninstallProgressForm;
+    ProceedButton.SetBounds(UninstallProgressForm.CancelButton.Left - ScaleX(90),
+      UninstallProgressForm.CancelButton.Top, ScaleX(80), UninstallProgressForm.CancelButton.Height);
+    ProceedButton.Caption := 'Kaldır';
+    ProceedButton.ModalResult := mrOK;
+    ProceedButton.Default := True;
+    BackButton.Parent := UninstallProgressForm;
+    BackButton.SetBounds(UninstallProgressForm.CancelButton.Left,
+      UninstallProgressForm.CancelButton.Top, UninstallProgressForm.CancelButton.Width,
+      UninstallProgressForm.CancelButton.Height);
+    BackButton.Caption := 'İptal';
+    BackButton.ModalResult := mrCancel;
+    BackButton.Cancel := True;
+    UninstallOptionsAccepted := UninstallProgressForm.ShowModal() = mrOK;
+    DeleteUserSettings := UninstallOptionsAccepted and Option.Checked;
+    DeleteUserLog := UninstallOptionsAccepted and LogOption.Checked;
+  finally
+    Option.Free;
+    LogOption.Free;
+    Note.Free;
+    ProceedButton.Free;
+    BackButton.Free;
+    UninstallProgressForm.PageNameLabel.Caption := OldTitle;
+    UninstallProgressForm.PageDescriptionLabel.Caption := OldDescription;
+    UninstallProgressForm.ProgressBar.Visible := True;
+    UninstallProgressForm.StatusLabel.Visible := True;
+    UninstallProgressForm.CancelButton.Visible := True;
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): string;
@@ -1222,11 +1434,22 @@ end;
 { Kisayol/masaustu ikonu bos gorunmesin diye kurulum sonunda shell ikon
   onbellegini yenilenmeye zorlar (dosya sistemi degisikligi yayinlar). }
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  UninstallKey, UninstallCommand: string;
 begin
   if CurStep = ssPostInstall then begin
     { Dosyalar kuruldu; hosts temizligi + gorev kaldirma burada yapilir. Istege bagli
       "DPort'u baslat" secenegine BAGLI DEGILDIR ve silent kurulumda da calisir. }
     DropFailsafeTaskAfterHostsCleanup();
+    { /SILENT skips Inno's redundant startup MsgBox, /DPORTUI keeps our
+      explicit same-form consent page. Genuine unattended calls retain data. }
+    UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{7C9E6A54-2D3B-4F81-A6E2-1B0C9D8E7F60}_is1';
+    if RegQueryStringValue(HKLM64, UninstallKey, 'UninstallString', UninstallCommand) then begin
+      if Pos('/DPORTUI=1', UninstallCommand) = 0 then
+        if not RegWriteStringValue(HKLM64, UninstallKey, 'UninstallString',
+          UninstallCommand + ' /SILENT /DPORTUI=1 /NORESTART') then
+          Log('DPort: tek ekranli kaldirma komutu kaydedilemedi');
+    end;
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
   end;
 end;
@@ -1235,7 +1458,18 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Code: Integer;
 begin
+  if (CurUninstallStep = usPostUninstall) and (DeleteUserSettings or DeleteUserLog) then begin
+    if not DeleteSelectedUserData(UninstallUserDataPath, DeleteUserSettings, DeleteUserLog) then begin
+      Log('DPort: secilen ayarlar/log temizligi tamamlanamadi: ' + UninstallUserDataPath);
+      if UserUninstallUI then
+        MsgBox('DPort kaldirildi, ancak ayarlar/log dosyalarinin tamami silinemedi.' + #13#10 +
+          UninstallUserDataPath, mbError, MB_OK);
+    end else
+      Log('DPort: secilen ayarlar/log temizligi tamamlandi.');
+  end;
+  if CurUninstallStep = usPostUninstall then CleanupUninstallCache();
   if CurUninstallStep = usUninstall then begin
+    if not UninstallOptionsAccepted then Abort;
     { Recheck immediately before removal, including silent uninstall. }
     if ConnectionRequiresRestore() or not StopVerifiedPassiveDPort() then
       RaiseException('DPort aktif veya guvenle kapatilamadi; kaldirma durduruldu.');
