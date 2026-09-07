@@ -82,7 +82,8 @@ class DiagnosticLoggingTests(unittest.TestCase):
         self.assertIsNone(server)
         self.assertIsNone(first)
         self.assertEqual(sum("sonuc=reset" in line for line in logs), 3)
-        self.assertIn("tum_denemeler_bitti=3", logs[-1])
+        self.assertIn("asama=paralel_tamamlandi", logs[-1])
+        self.assertIn("sonuc=basarisiz_veya_iptal", logs[-1])
         self.assertNotIn("sensitive free text", "\n".join(logs))
 
     def test_gui_persists_session_and_relay_diagnostics(self):

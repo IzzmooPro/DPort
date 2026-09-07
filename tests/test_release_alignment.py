@@ -20,7 +20,7 @@ from core.app_info import APP_NAME, APP_VERSION      # noqa: E402
 from core.updater import _pick_setup_asset, is_newer_version  # noqa: E402
 
 # Bu surumun supersede ettigi, en son YAYINLANMIS surum.
-PREVIOUS_RELEASE = "3.17"
+PREVIOUS_RELEASE = "3.18"
 
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
 _README = os.path.join(_ROOT, "README.md")
@@ -34,7 +34,7 @@ def _read(path: str) -> str:
 class TestReleaseAlignment(unittest.TestCase):
 
     def test_app_version_shape(self):
-        self.assertRegex(APP_VERSION, r"^\d+\.\d+$",
+        self.assertRegex(APP_VERSION, r"^\d+\.\d+(?:\.\d+)?$",
                          f"beklenmeyen surum bicimi: {APP_VERSION!r}")
 
     def test_inno_version_matches_app_version(self):
@@ -70,7 +70,7 @@ class TestReleaseAlignment(unittest.TestCase):
         if os.path.isfile(_ISS):
             targets.append(_ISS)
         old = re.escape(PREVIOUS_RELEASE)
-        pattern = re.compile(rf'(v{old}\b|"{old}"|Setup-{old}\b)')
+        pattern = re.compile(rf'(v{old}(?![\d.])|"{old}"|Setup-{old}(?![\d.]))')
         for path in targets:
             text = _read(path)
             hit = pattern.search(text)
@@ -79,7 +79,7 @@ class TestReleaseAlignment(unittest.TestCase):
                               f"{PREVIOUS_RELEASE} kalmis: {hit.group(0) if hit else ''}")
 
     def test_readme_installer_names_match_current_version(self):
-        names = re.findall(r"DPort-Setup-(\d+\.\d+)\.exe", _read(_README))
+        names = re.findall(r"DPort-Setup-(\d+\.\d+(?:\.\d+)?)\.exe", _read(_README))
         self.assertTrue(names)
         self.assertTrue(all(version == APP_VERSION for version in names))
 
@@ -93,6 +93,12 @@ class TestReleaseAlignment(unittest.TestCase):
     def test_git_tag_form_is_also_detected(self):
         """GitHub tag'i 'vX.Y' bicimindedir; updater onu da cozmeli."""
         self.assertTrue(is_newer_version(f"v{APP_VERSION}", PREVIOUS_RELEASE))
+
+    def test_patch_release_updates_old_clients_without_self_update(self):
+        self.assertTrue(is_newer_version('v3.18.1', '3.18'))
+        self.assertTrue(is_newer_version('3.18.1', '3.17'))
+        self.assertFalse(is_newer_version('3.18', '3.18.1'))
+        self.assertFalse(is_newer_version('v3.18.1', '3.18.1'))
 
     def test_multi_digit_minor_version_is_compared_numerically(self):
         """Cok haneli minor surum METINSEL degil SAYISAL karsilastirilmali."""

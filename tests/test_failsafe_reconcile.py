@@ -134,6 +134,10 @@ class _AppStub:
     def _apply_restored_status(self, dns_txt, can_retry=False):
         self.applied.append((dns_txt, can_retry))
 
+    def _finish_connection_operation(self, can_retry=False):
+        self._busy = False
+        self._apply_restored_status(L['val_unknown'], can_retry=can_retry)
+
     def after(self, _delay, func=None, *args):
         if func is not None:
             self.after_calls.append(func)

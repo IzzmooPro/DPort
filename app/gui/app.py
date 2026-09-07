@@ -400,6 +400,7 @@ class DPortApp(ctk.CTk):
         )
 
         self._busy = False
+        self._restore_retry_required = False
         self._connecting = False    # "Discord'u Ac" akisi sirasinda hero "Baglaniyor..." kalir
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
         self._update_download_active = False
@@ -1114,7 +1115,7 @@ class DPortApp(ctk.CTk):
         # DNS yedegi kalabilir; bu durumda kullanici kurtarma eylemini kaybetmez.
         # Onemli: hosts yazilamayip yol acilmasa bile DNS 1.1.1.1'e cekilmis olabilir;
         # bu durumda kullanici DNS'ini geri alabilmeli.
-        can_restore = active or bool(self._get_dns_backup())
+        can_restore = active or bool(self._get_dns_backup()) or self._restore_retry_required
         if not self._busy:
             self._set_connection_button(active, can_restore)
 
@@ -1290,11 +1291,35 @@ class DPortApp(ctk.CTk):
                 "CONNECTION | yol etkin; Discord kullanici tarafindan baslatilacak")
             self._st(L["st_activated"], GREEN)
         finally:
-            self._busy = False
-            self._connecting = False   # artik gercek durum uygulanabilir (hero cozulur)
-            # Dugmenin sonraki eylemi worker varsayimiyla degil, status
-            # refresh'in dogruladigi role/DNS durumuyla belirlenir.
-            self.after(0, self._refresh_status_async)
+            self.after(0, self._finish_connection_operation)
+
+    def _finish_connection_operation(self, can_retry=False):
+        """UI-thread completion; no PowerShell, DNS or version queries here.
+
+        Called only after the worker's system changes and rollback checks end.
+        Invalidate even snapshots started during that operation. The DNS tile
+        stays unknown until a fresh background read, not a guessed DHCP value.
+        """
+        if not self._alive:
+            return
+        self._status_generation += 1
+        self._busy = False
+        self._connecting = False
+        self._restore_retry_required = can_retry
+        active = self._unblocker.is_active()
+        can_restore = can_retry or bool(self._dns_backup_mem)
+        if active:
+            self.hero_dot.configure(text_color=GREEN)
+            self.hero_state.configure(text=L["hero_on"], text_color=TEXT)
+            self.hero.configure(border_color=GREEN, border_width=2)
+            self.dash["servers"].configure(text=L["servers_all"], text_color=GREEN)
+            self.dash["dns"].configure(text=L["val_unknown"], text_color=TEXT)
+            if not self._active_since:
+                self._active_since = time.time()
+            self._set_connection_button(True, can_restore)
+        else:
+            self._apply_restored_status(L["val_unknown"], can_retry=can_restore)
+        self._refresh_status_async()
 
     # ─────────────── Temali dialog (native messagebox yerine) ───────────────
     def _ask(self, title, message) -> bool:
@@ -1323,6 +1348,7 @@ class DPortApp(ctk.CTk):
         threading.Thread(target=self._restore_normal_w, daemon=True).start()
 
     def _restore_normal_w(self):
+        fully_restored = False
         try:
             self._st(L["st_restoring"], YELL)
             # TAM basari UC kosula birden baglidir: hosts yonlendirmesi
@@ -1336,15 +1362,9 @@ class DPortApp(ctk.CTk):
             status_key = "st_restored" if fully_restored else "st_restore_partial"
             status_color = GREEN if fully_restored else RED
             self._st(L[status_key], status_color)
-            dns_txt = self._current_dns_text()
-            self.after(
-                0,
-                lambda d=dns_txt, retry=not fully_restored:
-                    self._apply_restored_status(d, can_retry=retry),
-            )
         finally:
-            self._busy = False
-            self.after(0, self._refresh_status_async)
+            self.after(0, lambda retry=not fully_restored:
+                       self._finish_connection_operation(can_retry=retry))
 
     def _current_dns_text(self):
         """Ilk aktif adaptorun panoda gosterilecek guncel DNS metnini dondurur."""

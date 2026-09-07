@@ -112,6 +112,9 @@ class _ConnectStub:
     def _refresh_status_async(self):
         pass
 
+    def _finish_connection_operation(self, can_retry=False):
+        self._busy = self._connecting = False
+
     def _st(self, text, color=None):
         self.status.append(text)
 

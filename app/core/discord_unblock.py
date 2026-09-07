@@ -65,6 +65,10 @@ ALLOWED_HOSTS = frozenset(BLOCKED_HOSTS)
 # bu sinir, dogrudan TLS'e gecisin IP sayisiyla birlikte buyumesini onler.
 _FRAG_SWEEP_IPS = 2
 
+# At most four races (eight workers) process-wide, including late TCP connects.
+# Waiting callers do not spawn more threads; their original deadline still applies.
+_TLS_RACE_SLOTS = threading.BoundedSemaphore(4)
+
 HOSTS_PATH = os.path.join(
     os.environ.get("SystemRoot", r"C:\Windows"),
     "System32", "drivers", "etc", "hosts",
@@ -494,8 +498,114 @@ class DiscordUnblocker:
             self._stop_event = threading.Event()
         return self._resolve(host, cancel=self._stop_event)
 
-    # --- parcali ClientHello ile yeniden-denemeli upstream baglantisi ---
-    def _open_upstream(
+    def _open_upstream(self, hello, ips, attempts=None, host="bilinmiyor",
+                       stop_event=None, total_timeout=24, connection_id=0):
+        """Race two strategy lanes; only the winning socket reaches the client.
+
+        Only ClientHello is duplicated, never application traffic. A first TLS
+        record retains the existing selection criterion, not session validation.
+        Cancellation closes registered losers; a late connect is rejected before
+        sending. The global permit remains held until both workers have exited.
+        """
+        stop_event = stop_event if stop_event is not None else self._stop_event
+        started = time.monotonic()
+        deadline = started + total_timeout
+        attempts = max(7, 2 * len(ips)) if attempts is None else attempts
+        if not ips or attempts <= 0:
+            return None, None
+        cancelled = threading.Event()
+        changed = threading.Event()
+        lock = threading.Lock()
+        sockets = set()
+        winner = [None, None]
+        remaining = [2]
+        frag = fragment_client_hello(hello)
+        # Keep the previous total attempt budget and alternate-IP coverage.
+        candidates = [(ip, frag, True) for ip in ips[:_FRAG_SWEEP_IPS]]
+        candidates += [(ip, hello, False) for ip in ips[:_FRAG_SWEEP_IPS]]
+        for ip in ips[_FRAG_SWEEP_IPS:]:
+            candidates.extend(((ip, frag, True), (ip, hello, False)))
+        probe_count = len(candidates)
+        while len(candidates) < attempts:
+            candidates.append((ips[(len(candidates) - probe_count) % len(ips)], frag, True))
+        lanes = [[candidate for candidate in candidates[:attempts] if candidate[2] == mode]
+                 for mode in (True, False)]
+
+        while not stop_event.is_set() and time.monotonic() < deadline:
+            if _TLS_RACE_SLOTS.acquire(timeout=min(.02, max(0, deadline - time.monotonic()))):
+                break
+        else:
+            self._l(f"TLS | id={connection_id} | host={host} | sonuc=iptal_veya_kapasite_siniri")
+            return None, None
+
+        def register(sock):
+            with lock:
+                if cancelled.is_set() or stop_event.is_set():
+                    return False
+                sockets.add(sock)
+                return True
+
+        def worker(lane, initial_probes):
+            try:
+                if lane and not stop_event.is_set() and not cancelled.is_set():
+                    sock, first = self._open_upstream_serial(
+                        hello, ips, attempts=len(lane), host=host,
+                        stop_event=cancelled, total_timeout=max(0, deadline - time.monotonic()),
+                        connection_id=connection_id, _candidates=lane, _register=register,
+                        _probe_count=initial_probes)
+                    if sock is not None:
+                        with lock:
+                            if not cancelled.is_set() and not stop_event.is_set() and time.monotonic() < deadline:
+                                winner[:] = [sock, first]
+                                cancelled.set()
+                            else:
+                                self._close_socket(sock)
+            except Exception as exc:
+                self._l(f"TLS | id={connection_id} | host={host} | sonuc=deneme_kolu_hatasi | hata={type(exc).__name__}")
+            finally:
+                with lock:
+                    remaining[0] -= 1
+                    if remaining[0] == 0:
+                        _TLS_RACE_SLOTS.release()
+                changed.set()
+
+        self._l(f"TLS | id={connection_id} | host={host} | asama=paralel_basladi | azami_kol=2")
+        try:
+            for index, lane in enumerate(lanes):
+                try:
+                    initial_probes = sum(c[2] == (index == 0) for c in candidates[:min(probe_count, attempts)])
+                    threading.Thread(target=worker, args=(lane, initial_probes), daemon=True,
+                                     name=f"DPort-TLS-{connection_id}-{index}").start()
+                except Exception:
+                    with lock:
+                        remaining[0] -= len(lanes) - index
+                        if remaining[0] == 0:
+                            _TLS_RACE_SLOTS.release()
+                    raise
+            while not stop_event.is_set() and time.monotonic() < deadline:
+                with lock:
+                    if winner[0] is not None or remaining[0] == 0:
+                        break
+                changed.wait(.02)
+                changed.clear()
+        except BaseException:
+            with lock:
+                winner[:] = [None, None]
+            raise
+        finally:
+            with lock:
+                cancelled.set()
+                if stop_event.is_set() or time.monotonic() >= deadline:
+                    winner[:] = [None, None]
+                for sock in sockets:
+                    if sock is not winner[0]:
+                        self._close_socket(sock)
+        result = 'ilk_tls_yaniti' if winner[0] is not None else 'basarisiz_veya_iptal'
+        self._l(f"TLS | id={connection_id} | host={host} | asama=paralel_tamamlandi | sonuc={result} | sure_ms={round((time.monotonic()-started)*1000)} | tam_oturum_dogrulanmadi=True")
+        return tuple(winner)
+
+    # Each bounded race lane tries its own candidates sequentially.
+    def _open_upstream_serial(
         self,
         hello: bytes,
         ips: List[str],
@@ -504,19 +614,17 @@ class DiscordUnblocker:
         stop_event=None,
         total_timeout: float = 24,
         connection_id: int = 0,
+        _candidates=None,
+        _register=None,
+        _probe_count=None,
     ):
-        """ClientHello'yu gonderir ve sunucudan ServerHello gelene kadar
-        (gerekirse farkli IP/TLS stratejileriyle) tekrar dener.
+        """Execute one race lane, retaining bounded timeouts and retry backoff.
 
-        Bu DPI zamana gore degisken davraniyor: parcalanmis bir baglanti bile
-        bazen resetleniyor. Reset, sunucunun el sikismasi sirasinda baglantiyi
-        kapatmasi (bos recv / RST) olarak gorunur. Once her IP'de parcali TLS
-        denenir. CDN'in parcali ClientHello'yu kabul etmedigi ama alternatif bir
-        IP'nin DPI'a takilmadan dogrudan calistigi durumda, ayni sure butcesi
-        icinde her IP bir kez de normal ClientHello ile denenir. Kalan denemeler
-        parcali TLS'e ayrilir; boylece eski engel-asma davranisi korunur.
-
-        Doner: (server_soketi, sunucudan_gelen_ilk_bloklar) veya (None, None)."""
+        With no explicit candidates this also supports the former serial plan
+        for isolated before/after regression measurements. Production calls
+        supply disjoint strategy lanes via _open_upstream.
+        Returns the first handshake record, not proof of a complete session.
+        """
         attempts = max(7, 2 * len(ips)) if attempts is None else attempts
         stop_event = stop_event or self._stop_event
         deadline = time.monotonic() + total_timeout
@@ -539,6 +647,9 @@ class DiscordUnblocker:
         while len(candidates) < attempts:
             ip = ips[(len(candidates) - probe_count) % len(ips)]
             candidates.append((ip, frag, True))
+        if _candidates is not None:
+            candidates = _candidates
+            probe_count = len(candidates) if _probe_count is None else _probe_count
 
         for i, (ip, client_hello, fragmented) in enumerate(candidates[:attempts]):
             if stop_event.is_set() or time.monotonic() >= deadline:
@@ -551,6 +662,9 @@ class DiscordUnblocker:
                 se = socket.create_connection((ip, 443), timeout=max(0.001, min(8, deadline - time.monotonic())))
                 self._l(f"TCP | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | sonuc=baglandi | sure_ms={round((time.monotonic()-started)*1000)}")
                 if not self._track(se, stop_event):
+                    return None, None
+                if _register is not None and not _register(se):
+                    self._close_socket(se)
                     return None, None
                 se.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 se.settimeout(max(0.001, min(4, deadline - time.monotonic())))
@@ -584,6 +698,8 @@ class DiscordUnblocker:
                         self._close_socket(se)
                     except OSError:
                         pass
+                if stop_event.is_set():
+                    return None, None
                 elapsed_ms = round((time.monotonic() - started) * 1000)
                 self._l(
                     f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "

@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.18-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.18.1-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.18: `DPort-Setup-3.18.exe` — son sürümü yukarıdaki bağlantıdan indirebilirsiniz.</sub>
+<sub>v3.18.1: `DPort-Setup-3.18.1.exe` — son sürümü yukarıdaki bağlantıdan indirebilirsiniz.</sub>
 
 </div>
 
@@ -130,7 +130,14 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.18
+## v3.18.1
+
+- Parçalı ve doğrudan TLS yöntemleri sınırlı paralel denemelerle çalışır; yanıt veren yol diğer yöntemin zaman aşımını beklemeden seçilir. Kullanılmayan soketler kapatılır; toplam süre ve deneme sınırları korunur.
+- Bağlantı işlemi tamamlandığında buton ve bağlantı durumu ek DNS/sürüm sorgularını beklemeden güncellenir. Güvenlik kontrolleri atlanmaz; eksik geri almada tekrar deneme seçeneği korunur.
+- Paralel bağlantının başlangıcı, sonucu ve süresi loglanır. İlk TLS yanıtı tam oturum başarısı olarak gösterilmez.
+- Yerel kullanıcı testinde önceki uzun TLS beklemeleri görülmedi. Ağ koşulları değişebileceğinden her ağ için aynı hızlanma garanti edilmez.
+
+## Önceki sürüm: v3.18
 
 - Kaldırmada kullanıcı isterse gösterilen hesabın `config.json` ve `dport.log` dosyaları da silinir. Varsayılan seçim ve sessiz kaldırma verileri korur; diğer dosyalara/kullanıcılara dokunulmaz.
 - Ayarlar ve loglar kaldırma ekranında iki ayrı kutucukla seçilir. Bilinen eski güncelleme paketleri ve boş veri klasörleri güvenli kontrollerle temizlenir.
@@ -241,7 +248,7 @@ oturumunun çalıştığı anlamına gelmez. ISS uyumluluğu için ayrıca saha 
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.18:** `DPort-Setup-3.18.exe`. [Latest release](https://github.com/IzzmooPro/DPort/releases/latest).
+**Version 3.18.1:** `DPort-Setup-3.18.1.exe`. [Latest release](https://github.com/IzzmooPro/DPort/releases/latest).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 
