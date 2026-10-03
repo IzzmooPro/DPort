@@ -185,10 +185,10 @@ class TlsRaceTests(unittest.TestCase):
                 self.assertEqual(data, REPLY)
                 self.relay._close_socket(winner)
                 self.wait_workers()
-        # Python < 3.13 Windows'ta monotonic ~15.6 ms cozunurluklu; olcum o
-        # kadar kisa gorunebilir (CI'da 0.297 sn olculdu).
-        tick = time.get_clock_info('monotonic').resolution
-        self.assertGreaterEqual(timings[0], .3 - 2 * tick)
+        # Seri yol iki 150 ms bekleme yapar. Windows'ta bekleme ve saat birkac
+        # ms erken donebilir (CI: 0.297 ve 0.299 sn); tek bekleme 0.15 sn
+        # oldugundan 0.24 sn alt sinir iki beklemeyi yine kanitlar.
+        self.assertGreaterEqual(timings[0], .24)
         self.assertLess(timings[1], timings[0] / 2 + .05)
         print(f'Controlled TLS wait: serial={timings[0]*1000:.1f}ms race={timings[1]*1000:.1f}ms')
 
