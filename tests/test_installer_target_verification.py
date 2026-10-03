@@ -26,8 +26,9 @@ import unittest
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ISS = os.path.join(_ROOT, "packaging", "DPort.iss")
-_ISCC = os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                     "Programs", "Inno Setup 6", "ISCC.exe")
+# CI gibi farkli kurulumlarda derleyici yolu DPORT_ISCC ile verilebilir.
+_ISCC = os.environ.get("DPORT_ISCC") or os.path.join(
+    os.environ.get("LOCALAPPDATA", ""), "Programs", "Inno Setup 6", "ISCC.exe")
 
 _TARGET_BEGIN = "{ ===== DPORT SAFE TARGET BEGIN ===== }"
 _TARGET_END = "{ ===== DPORT SAFE TARGET END ===== }"

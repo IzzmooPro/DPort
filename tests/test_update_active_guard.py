@@ -93,7 +93,7 @@ class InstallerActiveGuard(unittest.TestCase):
         self.assertIn("{cm:ActiveConnectionBlock}", block)
 
     def test_real_uninstall_gate_with_stubbed_system_operations(self):
-        compiler = Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6/ISCC.exe'
+        compiler = Path(os.environ.get('DPORT_ISCC') or Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6/ISCC.exe')
         if not compiler.is_file():
             self.skipTest('Inno Setup compiler unavailable')
         logic = self.text[self.text.index('function InitializeUninstall():'):

@@ -647,8 +647,9 @@ class TestCleanupExitCodeContract(unittest.TestCase):
 _CLEANER_BEGIN = "{ ===== DPORT HOSTS CLEANER BEGIN ===== }"
 _CLEANER_END = "{ ===== DPORT HOSTS CLEANER END ===== }"
 
-_ISCC = os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                     "Programs", "Inno Setup 6", "ISCC.exe")
+# CI gibi farkli kurulumlarda derleyici yolu DPORT_ISCC ile verilebilir.
+_ISCC = os.environ.get("DPORT_ISCC") or os.path.join(
+    os.environ.get("LOCALAPPDATA", ""), "Programs", "Inno Setup 6", "ISCC.exe")
 
 _HARNESS_ISS = """
 [Setup]

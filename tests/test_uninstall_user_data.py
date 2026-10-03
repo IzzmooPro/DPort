@@ -51,7 +51,7 @@ class UserDataUninstallTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == 'nt', 'Windows/Inno native test')
     def test_native_only_selected_files_removed(self):
-        compiler = Path(os.environ['LOCALAPPDATA']) / 'Programs/Inno Setup 6/ISCC.exe'
+        compiler = Path(os.environ.get('DPORT_ISCC') or Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6/ISCC.exe')
         if not compiler.exists():
             self.skipTest('Stable Inno compiler unavailable')
         # Generated test harness operates solely in its own installer temp dir.
