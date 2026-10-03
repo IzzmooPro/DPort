@@ -6,7 +6,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "DPort"
-#define MyAppVersion "3.19"
+#define MyAppVersion "3.20"
 #define MyAppPublisher "IzzmooPro"
 #define MyAppExeName "DPort.exe"
 #define MyAppId "{{7C9E6A54-2D3B-4F81-A6E2-1B0C9D8E7F60}"

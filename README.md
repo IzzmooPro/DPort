@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.19-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.20-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.19: `DPort-Setup-3.19.exe` — son sürümü yukarıdaki bağlantıdan indirebilirsiniz.</sub>
+<sub>v3.20: `DPort-Setup-3.20.exe` — son sürümü yukarıdaki bağlantıdan indirebilirsiniz.</sub>
 
 </div>
 
@@ -130,7 +130,15 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.19
+## v3.20
+
+- Yanıt vermeyen bağlantı denemeleri artık 4 saniye boyunca tek başına beklenmez: ilk denemeler 1 saniye içinde yanıt almazsa, henüz denenmemiş Discord IP'lerinde iki ek deneme başlar. İlk denemeler kapatılmaz; yavaş ama çalışan ağlarda bağlantı yine kurulur.
+- Ek denemeler de oturumda öğrenilen yöntemi kullanır. Zaman aşımı ve toplam süre sınırları değişmez.
+- 1 saniyeden uzun yanıt bekleyip iptal edilen deneme, yöntem seçiminde hata sayılır; böylece çalışmayan yöntem oturumun daha başında bırakılır. Kısa süre bekleyip iptal edilen denemeler sayılmaz.
+- Loglarda her deneme hangi koldan yapıldığını (`kol=`) ve ek denemelerin başladığı an (`ek_kol_basladi`) gösterilir.
+- Değişiklikler otomatik testlerle ve saha loglarındaki oranlarla yapılan simülasyonla doğrulandı; gerçek ağda saha testi ayrıca yapılmalıdır.
+
+## Önceki sürüm: v3.19
 
 - Kaynaktan çalıştırmada Python 3.10 ve 3.11'de açılışı engelleyen sözdizimi hatası düzeltildi. `Calistir.bat`, 3.10'dan eski Python'u açık bir mesajla reddeder.
 - Bağlantı hazırlanırken pencere kapatılırsa kapanış işlem bitene kadar bekler; DNS veya `hosts` yarım değişmiş kalmaz. İşlem takılırsa kapanış 2 dakika sonra tamamlanır.
@@ -260,7 +268,7 @@ oturumunun çalıştığı anlamına gelmez. ISS uyumluluğu için ayrıca saha 
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.19:** `DPort-Setup-3.19.exe`. [Latest release](https://github.com/IzzmooPro/DPort/releases/latest).
+**Version 3.20:** `DPort-Setup-3.20.exe`. [Latest release](https://github.com/IzzmooPro/DPort/releases/latest).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 

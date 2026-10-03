@@ -80,6 +80,33 @@ class StrategyPreference(unittest.TestCase):
                 seed(self.relay, **counts)
                 self.assertEqual(self.plan()[0], 'karma')
 
+    def cancel(self, strategy, waited):
+        self.relay._log_cancelled(1, 'discord.com', 0, 5, strategy, '192.0.2.1',
+                                  time.monotonic() - waited)
+
+    def test_long_unanswered_wait_counts_as_failure(self):
+        seed(self.relay, dogrudan_basari=d._PREFER_MIN_WINS)
+        for _ in range(d._PREFER_MIN_FAILS):
+            self.cancel('parcali', d._NO_REPLY_EVIDENCE + .2)
+        self.assertIn('hata_sayildi=True', self.logs[-1])
+        self.assertEqual(self.plan()[0], 'dogrudan')
+        self.assertIn(f'parcali[yanitsiz_iptal={d._PREFER_MIN_FAILS}]', self.relay._summary_text())
+
+    def test_short_cancelled_wait_is_not_failure(self):
+        seed(self.relay, dogrudan_basari=d._PREFER_MIN_WINS)
+        for _ in range(5):
+            self.cancel('parcali', .05)
+        self.assertIn('hata_sayildi=False', self.logs[-1])
+        self.assertEqual(self.plan()[0], 'karma')
+
+    def test_long_wait_alone_cannot_create_preference_without_rival_wins(self):
+        # Yavas agda iki yontem de uzun bekleyip iptal edilse bile, hicbiri
+        # kazanmadan tercih olusmaz.
+        for strategy in ('parcali', 'dogrudan'):
+            for _ in range(3):
+                self.cancel(strategy, d._NO_REPLY_EVIDENCE + .2)
+        self.assertEqual(self.plan()[0], 'karma')
+
     def test_every_tenth_race_reprobes_both_strategies(self):
         seed(self.relay, dogrudan_basari=3, parcali_timeout=3)
         modes = [self.plan(win=True)[0] for _ in range(d._REPROBE_EVERY)]

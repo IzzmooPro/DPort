@@ -78,9 +78,19 @@ _PREFER_MIN_FAILS = 2
 _REPROBE_EVERY = 10
 _STRATEGIES = ("parcali", "dogrudan")
 
-# At most four races (eight workers) process-wide, including late TCP connects.
-# Waiting callers do not spawn more threads; their original deadline still applies.
+# At most four races (up to four workers each) process-wide, including late TCP
+# connects. Waiting callers do not spawn more threads; their deadline still applies.
 _TLS_RACE_SLOTS = threading.BoundedSemaphore(4)
+
+# Ilk iki kol bu sure icinde kazanan uretmezse bos IP'lerde iki ek kol baslar;
+# ilk denemeler kendi zaman asimina kadar acik kalir. Saha loglarinda basarili
+# ilk TLS yaniti 36-160 ms geldi; 1 sn yavas aglara genis pay birakir.
+_HEDGE_DELAY = 1.0
+
+# Bu sureden uzun yanit bekleyip iptal edilen deneme, yontem tercihi icin hata
+# sayilir. Ek kollar yarisi erken bitirdigi icin 4 sn'lik zaman asimina nadiren
+# ulasilir; saha loglarinda basarili yanitlar 36-160 ms icinde geldi.
+_NO_REPLY_EVIDENCE = 1.0
 
 HOSTS_PATH = os.path.join(
     os.environ.get("SystemRoot", r"C:\Windows"),
@@ -593,6 +603,26 @@ class DiscordUnblocker:
             self._stop_event = threading.Event()
         return self._resolve(host, cancel=self._stop_event)
 
+    @staticmethod
+    def _hedge_lanes(lanes, ips):
+        """Ek kollarin aday listeleri. Her ek kol bir ana kolun yontemini
+        kullanir, ilk denemelerin mesgul etmedigi IP'lerden baslar ve tum
+        IP'leri birer kez kapsar (geri bekleme yok)."""
+        parents = [lane for lane in lanes if lane]
+        busy = [lane[0][0] for lane in parents]
+        # Once bos IP'ler, sonra ana kollarin IP'leri caprazlanmis sirayla.
+        sequence = []
+        for ip in [ip for ip in ips if ip not in busy] + busy[1:] + busy[:1] + list(ips):
+            if ip not in sequence:
+                sequence.append(ip)
+        hedges = []
+        for index, parent in enumerate(parents):
+            _ip, payload, fragmented = parent[0]
+            shift = index % len(sequence)
+            order = sequence[shift:] + sequence[:shift]
+            hedges.append([(ip, payload, fragmented) for ip in order])
+        return hedges
+
     def _open_upstream(self, hello, ips, attempts=None, host="bilinmiyor",
                        stop_event=None, total_timeout=24, connection_id=0):
         """Race two strategy lanes; only the winning socket reaches the client.
@@ -658,7 +688,7 @@ class DiscordUnblocker:
                 sockets.add(sock)
                 return True
 
-        def worker(lane, initial_probes):
+        def worker(lane, initial_probes, lane_no):
             try:
                 if lane and not stop_event.is_set() and not cancelled.is_set():
                     info = {}
@@ -666,7 +696,7 @@ class DiscordUnblocker:
                         hello, ips, attempts=len(lane), host=host,
                         stop_event=cancelled, total_timeout=max(0, deadline - time.monotonic()),
                         connection_id=connection_id, _candidates=lane, _register=register,
-                        _probe_count=initial_probes, _info=info)
+                        _probe_count=initial_probes, _info=info, _lane=lane_no)
                     if sock is not None:
                         with lock:
                             if not cancelled.is_set() and not stop_event.is_set() and time.monotonic() < deadline:
@@ -685,12 +715,12 @@ class DiscordUnblocker:
                         _TLS_RACE_SLOTS.release()
                 changed.set()
 
-        self._l(f"TLS | id={connection_id} | host={host} | asama=paralel_basladi | azami_kol=2 | mod={mode} | mod_nedeni={mode_reason}")
+        self._l(f"TLS | id={connection_id} | host={host} | asama=paralel_basladi | azami_kol=4 | mod={mode} | mod_nedeni={mode_reason}")
         try:
             for index, lane in enumerate(lanes):
                 try:
                     initial_probes = sum(c[2] == (index == 0) for c in candidates[:min(probe_count, attempts)])
-                    threading.Thread(target=worker, args=(lane, initial_probes), daemon=True,
+                    threading.Thread(target=worker, args=(lane, initial_probes, index), daemon=True,
                                      name=f"DPort-TLS-{connection_id}-{index}").start()
                 except Exception:
                     with lock:
@@ -698,10 +728,36 @@ class DiscordUnblocker:
                         if remaining[0] == 0:
                             _TLS_RACE_SLOTS.release()
                     raise
+            hedge_at = time.monotonic() + _HEDGE_DELAY
+            hedged = False
             while not stop_event.is_set() and time.monotonic() < deadline:
+                hedge = []
                 with lock:
                     if winner[0] is not None or remaining[0] == 0:
                         break
+                    if not hedged and time.monotonic() >= hedge_at and not cancelled.is_set():
+                        hedged = True
+                        hedge = self._hedge_lanes(lanes, ips)
+                        # Sayac thread'ler baslamadan artirilir; kapasite izni
+                        # ancak tum kollar (ek kollar dahil) bitince birakilir.
+                        remaining[0] += len(hedge)
+                if hedge:
+                    self._l(f"TLS | id={connection_id} | host={host} | asama=ek_kol_basladi | "
+                            f"ek_kol={len(hedge)} | gecikme_ms={round(_HEDGE_DELAY * 1000)} | "
+                            f"ilk_hedefler={','.join(lane[0][0] for lane in hedge)}")
+                    for offset, lane in enumerate(hedge):
+                        lane_no = len(lanes) + offset
+                        try:
+                            threading.Thread(target=worker, args=(lane, len(lane), lane_no), daemon=True,
+                                             name=f"DPort-TLS-{connection_id}-{lane_no}").start()
+                        except Exception as exc:
+                            # Ek kol istege baglidir: baslatilamazsa yaris surer.
+                            self._l(f"TLS | id={connection_id} | host={host} | sonuc=ek_kol_baslatilamadi | hata={type(exc).__name__}")
+                            with lock:
+                                remaining[0] -= 1
+                                if remaining[0] == 0:
+                                    _TLS_RACE_SLOTS.release()
+                    continue
                 changed.wait(.02)
                 changed.clear()
         except BaseException:
@@ -727,14 +783,18 @@ class DiscordUnblocker:
         self._l(f"TLS | id={connection_id} | host={host} | asama=paralel_tamamlandi | sonuc={result} | kazanan_yol={winner_info[0]} | kazanan_hedef={winner_info[1]} | sure_ms={round((time.monotonic()-started)*1000)} | tam_oturum_dogrulanmadi=True")
         return tuple(winner)
 
-    def _log_cancelled(self, connection_id, host, index, attempts, strategy, ip, started):
+    def _log_cancelled(self, connection_id, host, index, attempts, strategy, ip, started, lane_tag=""):
         """Deneme yanit beklerken diger kol kazandi veya sure doldu. Bekleme
-        suresi, bu yolun o IP'de yanit verip vermedigini ayirt etmeye yarar."""
-        self._count(f"{strategy}_iptal_bekliyordu")
+        suresi, bu yolun o IP'de yanit verip vermedigini ayirt etmeye yarar.
+        Uzun yanitsiz bekleme yontem tercihi icin hata sayilir; kisa bekleme
+        (rakip hemen kazandi) sonuc sayilmaz."""
+        waited = time.monotonic() - started
+        counted = waited >= _NO_REPLY_EVIDENCE
+        self._count(f"{strategy}_{'yanitsiz_iptal' if counted else 'iptal_bekliyordu'}")
         self._l(
-            f"TLS | id={connection_id} | host={host} | deneme={index + 1}/{attempts} | "
+            f"TLS | id={connection_id} | host={host}{lane_tag} | deneme={index + 1}/{attempts} | "
             f"yol={strategy} | hedef={ip}:443 | sonuc=iptal_bekliyordu | "
-            f"bekleme_ms={round((time.monotonic() - started) * 1000)}"
+            f"bekleme_ms={round(waited * 1000)} | hata_sayildi={counted}"
         )
 
     # Each bounded race lane tries its own candidates sequentially.
@@ -751,6 +811,7 @@ class DiscordUnblocker:
         _register=None,
         _probe_count=None,
         _info=None,
+        _lane=None,
     ):
         """Execute one race lane, retaining bounded timeouts and retry backoff.
 
@@ -770,6 +831,7 @@ class DiscordUnblocker:
             return None, None
 
         frag = fragment_client_hello(hello)
+        lane_tag = "" if _lane is None else f" | kol={_lane}"
         # Preserve the early direct fallback for the first two IPs. Remaining
         # IPs each get both strategies, subject to the shared wall-clock budget.
         candidates = []
@@ -794,7 +856,7 @@ class DiscordUnblocker:
             strategy = "parcali" if fragmented else "dogrudan"
             try:
                 se = socket.create_connection((ip, 443), timeout=max(0.001, min(8, deadline - time.monotonic())))
-                self._l(f"TCP | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | sonuc=baglandi | sure_ms={round((time.monotonic()-started)*1000)}")
+                self._l(f"TCP | id={connection_id} | host={host}{lane_tag} | deneme={i + 1}/{attempts} | sonuc=baglandi | sure_ms={round((time.monotonic()-started)*1000)}")
                 if not self._track(se, stop_event):
                     return None, None
                 if _register is not None and not _register(se):
@@ -807,7 +869,7 @@ class DiscordUnblocker:
                 first = se.recv(65536)
                 if stop_event.is_set() or time.monotonic() >= deadline:
                     self._close_socket(se)
-                    self._log_cancelled(connection_id, host, i, attempts, strategy, ip, started)
+                    self._log_cancelled(connection_id, host, i, attempts, strategy, ip, started, lane_tag)
                     return None, None
                 if first and first[0] == 0x16:  # 0x16 = TLS ServerHello/handshake
                     se.settimeout(None)
@@ -816,7 +878,7 @@ class DiscordUnblocker:
                     if _info is not None:
                         _info["yol"], _info["hedef"] = strategy, ip
                     self._l(
-                        f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "
+                        f"TLS | id={connection_id} | host={host}{lane_tag} | deneme={i + 1}/{attempts} | "
                         f"yol={strategy} | hedef={ip}:443 | "
                         f"sonuc=ilk_tls_yaniti | sure_ms={elapsed_ms}"
                     )
@@ -827,7 +889,7 @@ class DiscordUnblocker:
                 response = "bos_yanit" if not first else "tls_disi_yanit"
                 self._count(f"{strategy}_{response}", ip)
                 self._l(
-                    f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "
+                    f"TLS | id={connection_id} | host={host}{lane_tag} | deneme={i + 1}/{attempts} | "
                     f"yol={strategy} | hedef={ip}:443 | sonuc={response} "
                     f"| sure_ms={elapsed_ms}"
                 )
@@ -838,14 +900,14 @@ class DiscordUnblocker:
                     except OSError:
                         pass
                 if stop_event.is_set():
-                    self._log_cancelled(connection_id, host, i, attempts, strategy, ip, started)
+                    self._log_cancelled(connection_id, host, i, attempts, strategy, ip, started, lane_tag)
                     return None, None
                 elapsed_ms = round((time.monotonic() - started) * 1000)
                 error_text = _socket_error_text(exc)
                 category = error_text if error_text in ("timeout", "reset", "reddedildi") else "diger_hata"
                 self._count(f"{strategy}_{category}", ip)
                 self._l(
-                    f"TLS | id={connection_id} | host={host} | deneme={i + 1}/{attempts} | "
+                    f"TLS | id={connection_id} | host={host}{lane_tag} | deneme={i + 1}/{attempts} | "
                     f"yol={strategy} | hedef={ip}:443 | "
                     f"sonuc={error_text} | sure_ms={elapsed_ms}"
                 )

@@ -29,7 +29,12 @@ jobs:
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe bulunamadi: $iscc" }
-          "Inno Setup: " + (Get-Item $iscc).VersionInfo.ProductVersion
+          # ISCC.exe surum kaynagi tasimaz; surum kaldirma kaydindan okunur.
+          $keys = 'HKLM:\SOFTWARE\WOW6432Node', 'HKLM:\SOFTWARE', 'HKCU:\Software' |
+            ForEach-Object { "$_\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1" }
+          $version = ($keys | Where-Object { Test-Path $_ } | Select-Object -First 1 |
+            ForEach-Object { (Get-ItemProperty $_).DisplayVersion })
+          "Inno Setup: " + ($(if ($version) { $version } else { 'bilinmiyor' }))
           "DPORT_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Compile sources
         run: python -m compileall -q app tests scripts packaging
