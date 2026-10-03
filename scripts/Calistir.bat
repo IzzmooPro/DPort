@@ -20,6 +20,15 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 python --version
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo [HATA] Python 3.10 veya daha yeni bir surum gerekli.
+    echo        https://python.org adresinden guncel Python yukleyin.
+    echo.
+    popd
+    pause
+    exit /b 1
+)
 echo [OK] Python kurulu.
 echo.
 

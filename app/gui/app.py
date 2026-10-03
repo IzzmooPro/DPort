@@ -345,6 +345,27 @@ IPC_REQUEST = IPC_MAGIC + b" SHOW\n"
 IPC_ACK = IPC_MAGIC + b" OK\n"
 IPC_TIMEOUT = 1.5
 
+# Baglanti/geri alma isi surerken kapanis istenirse temizlik isin bitmesini
+# bekler (bkz. destroy). Is takilirsa kapanis bu sureden sonra zorlanir.
+CLOSE_WAIT_MS = 120_000
+
+
+def _exclusive_listener(host: str, port: int) -> socket.socket:
+    """Baska bir surecin ayni porta SO_REUSEADDR ile ortak baglanamayacagi
+    dinleyici soketi. Windows'ta SO_REUSEADDR ikinci bir sureci ayni porta
+    kabul eder; SO_EXCLUSIVEADDRUSE bunu reddeder."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            srv.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        srv.bind((host, port))
+        srv.listen(5)
+    except OSError:
+        srv.close()
+        raise
+    return srv
+
 # Eski updater yordamları artık GUI akışından çağrılmıyor; bağımsız çekirdek
 # testleriyle uyumluluk için sabitleri burada tutuyoruz.
 UPD_IDLE_TIMEOUT = 90
@@ -383,6 +404,10 @@ def serve_ipc_connection(conn) -> bool:
 
 class DPortApp(ctk.CTk):
     VERSION = APP_VERSION
+    # Sinif varsayilanlari: kapanis yolu, __init__ tamamlanmadan da guvenle
+    # okuyabilsin (tkinter.__getattr__ eksik alanda self.tk'ye yonlenir).
+    _close_pending = False
+    _destroyed = False
 
     def __init__(self):
         self.cfg = ConfigManager(user_data_path("config.json"))
@@ -400,6 +425,8 @@ class DPortApp(ctk.CTk):
         )
 
         self._busy = False
+        self._close_pending = False  # kapanis, suren baglanti isi bitince yapilacak
+        self._destroyed = False
         self._restore_retry_required = False
         self._connecting = False    # "Discord'u Ac" akisi sirasinda hero "Baglaniyor..." kalir
         self._alive = True          # kapaninca False; arka plan thread'leri Tk'ye dokunmasin
@@ -597,10 +624,7 @@ class DPortApp(ctk.CTk):
     def _start_ipc(self):
         def listen():
             try:
-                srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                srv.bind((IPC_HOST, IPC_PORT))
-                srv.listen(5)
+                srv = _exclusive_listener(IPC_HOST, IPC_PORT)
             except OSError:
                 return
             self._ipc_srv = srv
@@ -633,6 +657,8 @@ class DPortApp(ctk.CTk):
 
     def _show_window(self):
         """Tepside/gizliyse pencereyi geri getirir ve one alir."""
+        if getattr(self, "_close_pending", False):
+            return          # kapaniyor: gizlenen pencere geri gelmesin
         self._stop_tray()   # geri gelince tepsi ikonu kalmasin
         try:
             self.deiconify()
@@ -1241,6 +1267,12 @@ class DPortApp(ctk.CTk):
                 )
                 return
 
+            # Kapanis istendiyse yeni sistem degisikligi baslatma.
+            if getattr(self, "_close_pending", False) is True:
+                self.log_mgr.write(
+                    "CONNECTION | kapanis istendi, sistem ayarlari degistirilmedi")
+                return
+
             # 2) Sistem DNS'ini 1.1.1.1 yap — ama once ORIJINALI yedekle
             self._st(L["st_setting_dns"], YELL)
             adapters = get_active_adapters()
@@ -1264,6 +1296,13 @@ class DPortApp(ctk.CTk):
                     self._st(L["st_dns_apply_failed"], RED)
                     return
             self._flushdns()
+
+            # Kapanis istendiyse role/hosts'u acma; degisen DNS'i ertelenen
+            # destroy() yedekten geri yukler.
+            if getattr(self, "_close_pending", False) is True:
+                self.log_mgr.write(
+                    "CONNECTION | kapanis istendi, yol acilmadan durduruldu")
+                return
 
             # 3) Engel asma yolunu ac (role + hosts)
             self._st(L["st_path_prep"], YELL)
@@ -1301,6 +1340,11 @@ class DPortApp(ctk.CTk):
         stays unknown until a fresh background read, not a guessed DHCP value.
         """
         if not self._alive:
+            return
+        if getattr(self, "_close_pending", False) is True:
+            # Is bitti; ertelenen kapanis artik guvenle temizlik yapabilir.
+            self._busy = False
+            self.destroy()
             return
         self._status_generation += 1
         self._busy = False
@@ -1807,10 +1851,11 @@ class DPortApp(ctk.CTk):
             return False
         if target:
             return True
+        reason = last_failsafe_error() or (
+            "Program Files altinda dogrulanmis DPort.exe bulunamadi")
         self.log_mgr.write(
             "FAILSAFE | dogrulanmis kurtarma hedefi yok, sisteme dokunulmadi | "
-            f"{last_failsafe_error() or 'Program Files altinda dogrulanmis '
-                                        'DPort.exe bulunamadi'}")
+            f"{reason}")
         return False
 
     def _install_failsafe_before_hosts(self) -> bool:
@@ -2152,6 +2197,16 @@ class DPortApp(ctk.CTk):
     # ─────────────────────────── Kapanis / tepsi ───────────────────────────
     def destroy(self):
         # Tamamen kapanirken yonlendirmeyi geri al, roleyi durdur, IPC'yi + tepsiyi kapat.
+        if getattr(self, "_destroyed", False):
+            return
+        # Suren baglanti/geri alma isi DNS veya hosts'u degistiriyor olabilir.
+        # Temizlik simdi yapilirsa is, temizlikten SONRA DNS/hosts yazabilir.
+        # Pencere gizlenir; temizlik is bitince _finish_connection_operation'dan
+        # yapilir.
+        if getattr(self, "_busy", False) and getattr(self, "_alive", False):
+            self._defer_close()
+            return
+        self._destroyed = True
         self._alive = False   # arka plan thread'leri artik Tk'ye dokunmasin
         if hasattr(self, "_update_checks"):
             self._update_checks.close()
@@ -2175,6 +2230,31 @@ class DPortApp(ctk.CTk):
         except Exception:
             pass
         super().destroy()
+
+    def _defer_close(self):
+        if getattr(self, "_close_pending", False):
+            return
+        self._close_pending = True
+        self.log_mgr.write(
+            "SESSION | kapanis istendi; suren baglanti islemi bitince tamamlanacak")
+        self._stop_tray()
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+        try:
+            self.after(CLOSE_WAIT_MS, self._force_close)
+        except Exception:
+            self._force_close()
+
+    def _force_close(self):
+        if getattr(self, "_destroyed", False):
+            return
+        self.log_mgr.write(
+            "SESSION | baglanti islemi zamaninda bitmedi; kapanis zorlandi",
+            level="WARN")
+        self._busy = False
+        self.destroy()
 
     def _on_close(self):
         # Hatirlanmis tercih varsa dogrudan uygula.

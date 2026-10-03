@@ -76,9 +76,15 @@ def signal_existing() -> bool:
 def acquire_mutex():
     """Atomik tek-örnek kilidi. (zaten_calisiyor, handle) döndürür."""
     try:
-        k = ctypes.windll.kernel32
+        from ctypes import wintypes
+        # use_last_error: GetLastError'i ayri bir ctypes cagrisiyla okumak,
+        # arada Python'un yaptigi Win32 cagrilari yuzunden yanlis kod verebilir.
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateMutexW.restype = wintypes.HANDLE
+        k.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
         h = k.CreateMutexW(None, False, MUTEX_NAME)
-        return (k.GetLastError() == 183), h  # 183 = ERROR_ALREADY_EXISTS
+        already = ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+        return already, h
     except Exception:
         return False, None
 

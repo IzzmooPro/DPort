@@ -14,6 +14,7 @@ sahte modullerle calisir.
 import os
 import subprocess
 import sys
+import tkinter
 import types
 import unittest
 from unittest import mock
@@ -245,6 +246,9 @@ class TestStartupDoesNotCreateTask(unittest.TestCase):
             mock.patch.object(g.DPortApp, "_check_updates_on_start", lambda self: None),
             mock.patch.object(g.DPortApp, "_purge_legacy_downloads", lambda self: None),
             mock.patch.object(g.DPortApp, "_offer_legacy_dns_restore", lambda self: None),
+            # Gercek atexit kaydi, test sureci kapanirken mock'lanmamis hosts ve
+            # schtasks cagrilarini calistirirdi.
+            mock.patch.object(g.atexit, "register", lambda *a, **k: None),
         ]
 
     def _boot(self, hosts_cleaned):
@@ -254,7 +258,17 @@ class TestStartupDoesNotCreateTask(unittest.TestCase):
             p.start()
         app = None
         try:
-            app = gui_app.DPortApp()
+            # Ayni surecte tekrar tekrar Tk olusturulurken Windows'ta aralikli
+            # olarak Tcl kutuphanesi (init.tcl/tk.tcl) yuklenemiyor; uygulama
+            # surec basina tek Tk olusturur. Yalniz hosts/gorev cagrilarindan
+            # ONCE olusan Tk hatasi yeniden denenir; boylece sayaclar etkilenmez.
+            for attempt in range(3):
+                try:
+                    app = gui_app.DPortApp()
+                    break
+                except tkinter.TclError:
+                    if install.called or reconcile.called or attempt == 2:
+                        raise
         finally:
             if app is not None:
                 try:

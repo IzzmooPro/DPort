@@ -189,6 +189,95 @@ class TlsRaceTests(unittest.TestCase):
         self.assertLess(timings[1], timings[0] / 2 + .05)
         print(f'Controlled TLS wait: serial={timings[0]*1000:.1f}ms race={timings[1]*1000:.1f}ms')
 
+    def test_lanes_start_on_different_ips_and_keep_full_coverage(self):
+        plans = {}
+        def capture(hello, ips, **kwargs):
+            lane = kwargs['_candidates']
+            plans[lane[0][2]] = ([c[0] for c in lane], kwargs['_probe_count'])
+            return None, None
+        ips = [f'192.0.2.{i}' for i in range(1, 6)]
+        with patch.object(self.relay, '_open_upstream_serial', side_effect=capture):
+            self.relay._open_upstream(HELLO, ips)
+        fragmented, direct = plans[True], plans[False]
+        self.assertEqual(fragmented[0], [ips[0], ips[2], ips[4], ips[1], ips[3]])
+        self.assertEqual(direct[0], [ips[1], ips[3], ips[0], ips[2], ips[4]])
+        # Ayni turda iki kol hic ayni IP'yi denemez; her kol tum IP'leri kapsar.
+        self.assertTrue(all(a != b for a, b in zip(fragmented[0], direct[0])))
+        self.assertEqual(sorted(fragmented[0]), sorted(ips))
+        self.assertEqual(sorted(direct[0]), sorted(ips))
+        self.assertEqual((fragmented[1], direct[1]), (5, 5))
+
+    def test_unresponsive_first_ip_does_not_stall_both_lanes(self):
+        dead, alive = '192.0.2.1', '192.0.2.2'
+        def connect(address, *args, **kwargs):
+            ip = address[0]
+            def receive(sock):
+                if ip == alive and sock.sent == [HELLO]:
+                    return REPLY
+                sock.closed.wait(2)    # yanitsiz IP: zaman asimini taklit eder
+                raise TimeoutError()
+            sock = Sock(receive)
+            sock.ip = ip
+            return sock
+        with patch.object(d.socket, 'create_connection', side_effect=connect):
+            start = time.monotonic()
+            winner, data = self.relay._open_upstream(HELLO, [dead, alive])
+            elapsed = time.monotonic() - start
+            self.relay._close_socket(winner)
+            self.wait_workers()
+        self.assertEqual(data, REPLY)
+        self.assertEqual(winner.ip, alive)
+        self.assertLess(elapsed, 1)
+
+    def test_diagnostics_name_winner_and_pending_loser(self):
+        def receive(sock):
+            if sock.sent == [HELLO]:
+                time.sleep(.05)         # parcali kol kesin olarak beklemede olsun
+                return REPLY
+            sock.closed.wait(2)
+            raise OSError()
+        with patch.object(d.socket, 'create_connection',
+                          side_effect=lambda *a, **k: Sock(receive)):
+            winner, data = self.relay._open_upstream(HELLO, ['192.0.2.7'], attempts=2)
+            self.relay._close_socket(winner)
+            self.wait_workers()
+        joined = '\n'.join(self.logs)
+        # Kaybeden kolun iptal satiri ozet satirindan sonra da gelebilir.
+        completed = [line for line in self.logs if 'paralel_tamamlandi' in line]
+        self.assertEqual(len(completed), 1)
+        self.assertIn('kazanan_yol=dogrudan | kazanan_hedef=192.0.2.7', completed[0])
+        self.assertRegex(joined, r'yol=parcali \| hedef=192\.0\.2\.7:443 \| '
+                                 r'sonuc=iptal_bekliyordu \| bekleme_ms=\d+')
+        summary = self.relay._summary_text()
+        self.assertIn('dogrudan[basari=1]', summary)
+        self.assertIn('parcali[iptal_bekliyordu=1]', summary)
+        self.assertIn('ip_hata[yok]', summary)
+
+    def test_failed_race_reports_no_winner_and_counts_failures_per_ip(self):
+        def receive(sock):
+            raise TimeoutError()
+        with patch.object(d.socket, 'create_connection',
+                          side_effect=lambda *a, **k: Sock(receive)):
+            self.assertEqual(self.relay._open_upstream(
+                HELLO, ['192.0.2.8', '192.0.2.9'], attempts=4), (None, None))
+            self.wait_workers()
+        self.assertIn('kazanan_yol=yok | kazanan_hedef=yok', self.logs[-1])
+        summary = self.relay._summary_text()
+        self.assertIn('parcali[timeout=2]', summary)
+        self.assertIn('dogrudan[timeout=2]', summary)
+        self.assertIn('192.0.2.8=2', summary)
+        self.assertIn('192.0.2.9=2', summary)
+
+    def test_stop_writes_session_summary_once(self):
+        relay = d.DiscordUnblocker(log=self.logs.append)
+        relay._running = True
+        relay._count('baglanti')
+        relay.stop()
+        relay.stop()
+        summaries = [line for line in self.logs if line.startswith('RELAY_OZET')]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn('baglanti=1', summaries[0])
+
     def test_real_socket_loser_gets_eof_and_winner_preserves_bytes(self):
         peers = []
         clients = []

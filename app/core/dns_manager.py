@@ -123,9 +123,11 @@ def set_dns(
     errors = []
 
     # --- IPv4 primary ---
+    # validate=no: IPv6 ve restore_dns ile ayni. Varsayilan dogrulama sorgusu
+    # yavaslarsa netsh hata kodu donup gereksiz rollback tetikleyebilir.
     r = subprocess.run(
         ["netsh", "interface", "ip", "set", "dnsservers",
-         adapter_name, "static", ipv4_primary],
+         adapter_name, "static", ipv4_primary, "validate=no"],
         capture_output=True, text=True,
         encoding="utf-8", errors="ignore", timeout=12,
         creationflags=subprocess.CREATE_NO_WINDOW
@@ -137,7 +139,7 @@ def set_dns(
     if ipv4_secondary:
         r = subprocess.run(
             ["netsh", "interface", "ip", "add", "dnsservers",
-             adapter_name, ipv4_secondary, "index=2"],
+             adapter_name, ipv4_secondary, "index=2", "validate=no"],
             capture_output=True, text=True,
             encoding="utf-8", errors="ignore", timeout=12,
             creationflags=subprocess.CREATE_NO_WINDOW

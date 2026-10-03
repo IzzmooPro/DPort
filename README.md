@@ -5,12 +5,12 @@
 **Discord'un açılmadığı ya da güncellenmediği durumlarda, başka bir program kurmadan bağlanmanı sağlayan küçük bir Windows aracı.**
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
-![Sürüm](https://img.shields.io/badge/Sürüm-v3.18.1-5865F2)
+![Sürüm](https://img.shields.io/badge/Sürüm-v3.19-5865F2)
 ![Yapımcı](https://img.shields.io/badge/Yapımcı-IzzmooPro-2ea44f)
 
 ### ⬇️ [**Son yayımlanan DPort sürümünü indir**](https://github.com/IzzmooPro/DPort/releases/latest)
 
-<sub>v3.18.1: `DPort-Setup-3.18.1.exe` — son sürümü yukarıdaki bağlantıdan indirebilirsiniz.</sub>
+<sub>v3.19: `DPort-Setup-3.19.exe` — son sürümü yukarıdaki bağlantıdan indirebilirsiniz.</sub>
 
 </div>
 
@@ -130,7 +130,19 @@ DPort açılınca GitHub'daki son sürümü kontrol eder. Yeni sürüm varsa **s
 
 ---
 
-## v3.18.1
+## v3.19
+
+- Kaynaktan çalıştırmada Python 3.10 ve 3.11'de açılışı engelleyen sözdizimi hatası düzeltildi. `Calistir.bat`, 3.10'dan eski Python'u açık bir mesajla reddeder.
+- Bağlantı hazırlanırken pencere kapatılırsa kapanış işlem bitene kadar bekler; DNS veya `hosts` yarım değişmiş kalmaz. İşlem takılırsa kapanış 2 dakika sonra tamamlanır.
+- Yerel röle ve tek-örnek bağlantısı portu başka bir programla paylaşmaz; 443 başka bir program tarafından tutuluyorsa bu açıkça bildirilir.
+- DNS atamasında IPv4 için de doğrulama sorgusu beklenmez; yavaş bir sorgu bağlantıyı gereksiz yere geri aldırmaz.
+- Parçalı ve doğrudan TLS denemeleri artık aynı anda aynı Discord IP'sini beklemez; yanıt vermeyen bir IP iki yöntemi birlikte 4 saniye bekletmez. Her yöntem yine tüm IP'leri ve aynı deneme sınırını kullanır.
+- DPort bağlantı süresince hangi yöntemin çalıştığını öğrenir: bir yöntem en az 2 kez çalışmış, diğeri hiç çalışmamış ve en az 2 kez hata vermişse iki deneme de çalışan yöntemle farklı IP'lerde yapılır. Ağ değişebileceği için her 10 bağlantıda bir ve tercih edilen yöntem tamamen başarısız olduğunda iki yöntem yeniden denenir. Zaman aşımı ve deneme sınırları değişmez.
+- Tanılama kayıtları genişletildi: her bağlantıda kazanan yöntem ve Discord IP'si, kaybeden yöntemin iptal edilene kadar ne kadar beklediği ve röle durduğunda yöntem/IP bazında oturum özeti (`RELAY_OZET`) loglanır. İçerik veya kişisel veri kaydedilmez.
+- Çalışan DPort'un algılanması daha güvenilir hale getirildi.
+- Değişiklikler otomatik testlerle doğrulandı; gerçek ağda saha testi ayrıca yapılmalıdır.
+
+## Önceki sürüm: v3.18.1
 
 - Parçalı ve doğrudan TLS yöntemleri sınırlı paralel denemelerle çalışır; yanıt veren yol diğer yöntemin zaman aşımını beklemeden seçilir. Kullanılmayan soketler kapatılır; toplam süre ve deneme sınırları korunur.
 - Bağlantı işlemi tamamlandığında buton ve bağlantı durumu ek DNS/sürüm sorgularını beklemeden güncellenir. Güvenlik kontrolleri atlanmaz; eksik geri almada tekrar deneme seçeneği korunur.
@@ -248,7 +260,7 @@ oturumunun çalıştığı anlamına gelmez. ISS uyumluluğu için ayrıca saha 
 
 **DPort** is a small Windows tool that prepares Discord's connection path on networks where it otherwise fails. Its single action button shows **Enable Connection** while off and **Restore Defaults** while active. Then open Discord yourself whenever you want; DPort never launches, closes, or restarts Discord.
 
-**Version 3.18.1:** `DPort-Setup-3.18.1.exe`. [Latest release](https://github.com/IzzmooPro/DPort/releases/latest).
+**Version 3.19:** `DPort-Setup-3.19.exe`. [Latest release](https://github.com/IzzmooPro/DPort/releases/latest).
 
 **What it changes:** your adapter's DNS (to Cloudflare `1.1.1.1`), five Discord entries in the Windows `hosts` file, and a small local relay on `127.0.0.1:443`. All three are reverted by *Restore Defaults* or when the app closes.
 
